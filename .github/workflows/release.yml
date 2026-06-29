@@ -70,6 +70,11 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
       - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*

@@ -36,3 +36,7 @@ C-family files use clangd in `auto` when available, then fall back to tree-sitte
 - `1`: no matches.
 - `2`: CLI or configuration error.
 - `3`: explicitly required backend failed.
+
+## Release Assets
+
+Tagged releases publish platform archives plus `SHA256SUMS`. The Windows install script verifies the downloaded archive when checksums are available, then falls back to a local source build if release installation fails.

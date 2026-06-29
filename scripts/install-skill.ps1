@@ -27,6 +27,24 @@ if (-not $FromSource) {
         New-Item -ItemType Directory -Force $tmp | Out-Null
         $archive = Join-Path $tmp $asset.name
         Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archive
+        $checksums = $release.assets | Where-Object { $_.name -eq "SHA256SUMS" } | Select-Object -First 1
+        if ($null -ne $checksums) {
+            $checksumFile = Join-Path $tmp "SHA256SUMS"
+            Invoke-WebRequest -Uri $checksums.browser_download_url -OutFile $checksumFile
+            $expected = Get-Content $checksumFile |
+                Where-Object { $_ -match "\s$([regex]::Escape($asset.name))$" } |
+                ForEach-Object { ($_ -split "\s+")[0].ToLowerInvariant() } |
+                Select-Object -First 1
+            if (-not $expected) {
+                throw "checksum for $($asset.name) not found in SHA256SUMS"
+            }
+            $actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) {
+                throw "checksum mismatch for $($asset.name)"
+            }
+        } else {
+            Write-Warning "Release does not include SHA256SUMS; skipping checksum verification."
+        }
         Expand-Archive -Path $archive -DestinationPath $tmp -Force
         Copy-Item -Force (Join-Path $tmp "codescope.exe") (Join-Path $BinaryDir "codescope.exe")
         Remove-Item -Recurse -Force $tmp
