@@ -36,6 +36,6 @@ fn import_context(language: Language, text: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n"),
-        Language::Text => String::new(),
+        Language::Markdown | Language::Text => String::new(),
     }
 }

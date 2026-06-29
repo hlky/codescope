@@ -11,6 +11,7 @@ pub const CPP_EXTS: &[&str] = &[
 ];
 pub const CUDA_EXTS: &[&str] = &["cu", "cuh"];
 pub const HIP_EXTS: &[&str] = &["hip"];
+pub const MARKDOWN_EXTS: &[&str] = &["md", "markdown", "mdown", "mkdn"];
 
 pub fn language_for_path(path: &Path) -> Option<Language> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
@@ -24,6 +25,8 @@ pub fn language_for_path(path: &Path) -> Option<Language> {
         Some(Language::C)
     } else if CPP_EXTS.contains(&ext.as_str()) {
         Some(Language::Cpp)
+    } else if MARKDOWN_EXTS.contains(&ext.as_str()) {
+        Some(Language::Markdown)
     } else {
         None
     }
@@ -37,6 +40,7 @@ pub fn language_allowed(language: Language, filter: Option<LanguageFilter>) -> b
         Some(LanguageFilter::Cpp | LanguageFilter::Cxx) => language == Language::Cpp,
         Some(LanguageFilter::Cuda) => language == Language::Cuda,
         Some(LanguageFilter::Hip) => language == Language::Hip,
+        Some(LanguageFilter::Markdown) => language == Language::Markdown,
     }
 }
 
@@ -121,6 +125,10 @@ mod tests {
         assert_eq!(language_for_path(Path::new("x.hpp")), Some(Language::Cpp));
         assert_eq!(language_for_path(Path::new("x.cu")), Some(Language::Cuda));
         assert_eq!(language_for_path(Path::new("x.hip")), Some(Language::Hip));
+        assert_eq!(
+            language_for_path(Path::new("x.md")),
+            Some(Language::Markdown)
+        );
         assert_eq!(language_for_path(Path::new("x.txt")), None);
     }
 

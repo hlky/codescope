@@ -9,18 +9,21 @@ codescope list-functions --path .
 codescope extract-function --name Namespace::Class::method --path src
 codescope extract-symbol --name Foo --kind class --path .
 codescope extract-variable --name CONFIG --scope Foo --path .
+codescope list-headings --path docs
+codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
 codescope context --name foo --path .
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, and tree-sitter/lexical fallback for C, C++, CUDA, and HIP.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
 - Python structural parsing via tree-sitter.
 - C-family semantic symbols/references via clangd LSP when available.
 - C-family structural fallback via tree-sitter and lexical scanning.
+- Markdown headings and sections via tree-sitter.
 - Codex skill packaging in `skill/SKILL.md`.
 
 See [docs/USAGE.md](docs/USAGE.md) for command details.
@@ -60,6 +63,20 @@ Use `--json` for stable machine-readable records:
   "kind": "function",
   "name": "method",
   "qualified_name": "Namespace::Class::method",
+  "start_line": 10,
+  "end_line": 42,
+  "source": "..."
+}
+```
+
+```json
+{
+  "path": "README.md",
+  "language": "markdown",
+  "backend": "tree-sitter",
+  "kind": "heading",
+  "name": "Installation",
+  "qualified_name": "Usage.Installation",
   "start_line": 10,
   "end_line": 42,
   "source": "..."

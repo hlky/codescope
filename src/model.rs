@@ -13,6 +13,7 @@ pub enum LanguageFilter {
     Cxx,
     Cuda,
     Hip,
+    Markdown,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -23,6 +24,7 @@ pub enum Language {
     Cpp,
     Cuda,
     Hip,
+    Markdown,
     Text,
 }
 
@@ -34,6 +36,7 @@ impl fmt::Display for Language {
             Self::Cpp => "cpp",
             Self::Cuda => "cuda",
             Self::Hip => "hip",
+            Self::Markdown => "markdown",
             Self::Text => "text",
         };
         f.write_str(value)
@@ -47,6 +50,7 @@ pub enum SymbolKindFilter {
     Struct,
     Enum,
     Variable,
+    Heading,
     All,
 }
 
@@ -58,6 +62,7 @@ pub enum SymbolKind {
     Struct,
     Enum,
     Variable,
+    Heading,
     Reference,
 }
 
@@ -69,6 +74,7 @@ impl fmt::Display for SymbolKind {
             Self::Struct => "struct",
             Self::Enum => "enum",
             Self::Variable => "variable",
+            Self::Heading => "heading",
             Self::Reference => "reference",
         };
         f.write_str(value)
@@ -147,6 +153,7 @@ pub fn kind_matches(filter: Option<SymbolKindFilter>, kind: SymbolKind) -> bool 
         Some(SymbolKindFilter::Struct) => kind == SymbolKind::Struct,
         Some(SymbolKindFilter::Enum) => kind == SymbolKind::Enum,
         Some(SymbolKindFilter::Variable) => kind == SymbolKind::Variable,
+        Some(SymbolKindFilter::Heading) => kind == SymbolKind::Heading,
     }
 }
 

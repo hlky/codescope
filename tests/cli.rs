@@ -59,6 +59,28 @@ int GLOBAL_COUNT = 7;
         .trim_start(),
     )
     .unwrap();
+    std::fs::write(
+        dir.path().join("README.md"),
+        r#"
+# Project
+overview
+
+```markdown
+## Not a heading
+```
+
+## Usage
+steps
+
+### Details
+more
+
+## API
+reference
+"#
+        .trim_start(),
+    )
+    .unwrap();
     dir
 }
 
@@ -154,6 +176,56 @@ fn list_functions_outputs_plain_records() {
         .success()
         .stdout(predicate::str::contains("helper"))
         .stdout(predicate::str::contains("Widget.build"));
+}
+
+#[test]
+fn markdown_headings_can_be_listed_and_sections_extracted() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["list-headings", "--lang", "markdown", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Project.Usage"))
+        .stdout(predicate::str::contains("Not a heading").not());
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-section",
+            "--name",
+            "Project.Usage",
+            "--lang",
+            "markdown",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("### Details"))
+        .stdout(predicate::str::contains("## API").not());
+}
+
+#[test]
+fn extract_symbol_can_find_markdown_heading() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-symbol",
+            "--kind",
+            "heading",
+            "--name",
+            "Usage",
+            "--lang",
+            "markdown",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("heading, Project.Usage"));
 }
 
 #[test]

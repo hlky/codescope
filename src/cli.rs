@@ -28,7 +28,9 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     ListFunctions(QueryArgs),
+    ListHeadings(QueryArgs),
     ExtractFunction(NamedArgs),
+    ExtractSection(NamedArgs),
     ExtractSymbol(SymbolArgs),
     ExtractVariable(VariableArgs),
     References(NamedArgs),
@@ -162,12 +164,22 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
             symbols.truncate(args.common.max_matches);
             Ok((symbols, args.common.json, false))
         }
+        Command::ListHeadings(args) => {
+            let mut symbols = collect_markdown_headings(&args.common, args.query.as_deref())?;
+            symbols.truncate(args.common.max_matches);
+            Ok((symbols, args.common.json, false))
+        }
         Command::ExtractFunction(args) => {
             let mut symbols = collect_symbols(
                 &args.common,
                 Some(SymbolKindFilter::Function),
                 Some(&args.name),
             )?;
+            symbols.truncate(args.common.max_matches);
+            Ok((symbols, args.common.json, true))
+        }
+        Command::ExtractSection(args) => {
+            let mut symbols = collect_markdown_headings(&args.common, Some(&args.name))?;
             symbols.truncate(args.common.max_matches);
             Ok((symbols, args.common.json, true))
         }
@@ -245,6 +257,15 @@ fn collect_symbols(
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
                 c_family.push((file, text));
             }
+            Some(Language::Markdown)
+                if kind.is_none()
+                    || matches!(
+                        kind,
+                        Some(SymbolKindFilter::All | SymbolKindFilter::Heading)
+                    ) =>
+            {
+                out.extend(crate::markdown::headings(&file, &text, wanted));
+            }
             _ => {}
         }
         if out.len() >= common.max_matches {
@@ -260,6 +281,30 @@ fn collect_symbols(
             wanted,
             common.max_matches - out.len(),
         )?);
+    }
+    Ok(out)
+}
+
+fn collect_markdown_headings(
+    common: &CommonArgs,
+    wanted: Option<&str>,
+) -> Result<Vec<Symbol>, AppError> {
+    let path = common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
+        .map_err(AppError::Config)?;
+    let mut out = Vec::new();
+    for file in source_files(&path, common.lang) {
+        let Some(text) = read_text(&file) else {
+            continue;
+        };
+        if language_for_path(&file) == Some(Language::Markdown) {
+            out.extend(crate::markdown::headings(&file, &text, wanted));
+        }
+        if out.len() >= common.max_matches {
+            break;
+        }
     }
     Ok(out)
 }

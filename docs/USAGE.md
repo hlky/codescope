@@ -9,6 +9,8 @@ codescope list-functions --path .
 codescope extract-function --name Namespace::Class::method --path src
 codescope extract-symbol --name Foo --kind class --path .
 codescope extract-variable --name CONFIG --scope Foo --path .
+codescope list-headings --path docs
+codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
 codescope context --name foo --path .
@@ -18,8 +20,8 @@ codescope context --name foo --path .
 
 - `--json`: emit stable JSON records.
 - `--max-matches N`: stop after `N` matches.
-- `--lang python|c|cpp|c++|cuda|hip`: limit language search.
-- `--kind function|class|struct|enum|variable|all`: limit symbol kind where supported.
+- `--lang python|c|cpp|c++|cuda|hip|markdown`: limit language search.
+- `--kind function|class|struct|enum|variable|heading|all`: limit symbol kind where supported.
 - `--backend auto|lsp|tree-sitter|lexical`: choose backend behavior.
 - `--root PATH`: set project root for clangd.
 - `--compile-commands-dir PATH`: pass a compilation database directory to clangd.
@@ -29,6 +31,8 @@ codescope context --name foo --path .
 Python uses tree-sitter for tolerant structural parsing.
 
 C-family files use clangd in `auto` when available, then fall back to tree-sitter. `--backend lsp` requires clangd and exits non-zero if clangd cannot run. `--backend lexical` is a rough fallback for functions, types, variables, and references.
+
+Markdown uses tree-sitter for block parsing. `list-headings` returns heading records with qualified names based on heading nesting. `extract-section` returns the heading and its content until the next heading at the same or higher level. Fenced code headings are ignored by the parser.
 
 ## Exit Codes
 
