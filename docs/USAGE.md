@@ -28,7 +28,7 @@ codescope context --name foo --path .
 
 Python uses tree-sitter for tolerant structural parsing.
 
-C-family files use clangd in `auto` when available, then fall back to tree-sitter. `--backend lsp` requires clangd and exits non-zero if clangd cannot run. `--backend lexical` is a rough fallback for function extraction and references.
+C-family files use clangd in `auto` when available, then fall back to tree-sitter. `--backend lsp` requires clangd and exits non-zero if clangd cannot run. `--backend lexical` is a rough fallback for functions, types, variables, and references.
 
 ## Exit Codes
 

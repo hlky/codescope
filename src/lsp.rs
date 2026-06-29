@@ -26,7 +26,7 @@ pub fn document_symbols(
     max_matches: usize,
 ) -> anyhow::Result<Vec<Symbol>> {
     let mut client = ClangdClient::start(options)?;
-    let mut out = Vec::new();
+    let mut out: Vec<Symbol> = Vec::new();
     for (path, text) in files {
         let file_symbols = client.document_symbols_for_file(path, text, kind_filter, wanted)?;
         out.extend(file_symbols);
@@ -55,7 +55,7 @@ pub fn references(
         }
     }
 
-    let mut out = Vec::new();
+    let mut out: Vec<Symbol> = Vec::new();
     if let Some((uri, line, character)) = definition_position {
         let result = client.request(
             "textDocument/references",
@@ -98,6 +98,64 @@ pub fn references(
                     end_line,
                     line_slice(&text, start_line, start_line),
                 ));
+            }
+        }
+    }
+    client.shutdown();
+    Ok(out)
+}
+
+pub fn callers(
+    files: &[(PathBuf, String)],
+    options: &ClangdOptions,
+    wanted: &str,
+    max_matches: usize,
+) -> anyhow::Result<Vec<Symbol>> {
+    let mut client = ClangdClient::start(options)?;
+    let mut definition_position = None;
+    for (path, text) in files {
+        let positions = client.symbol_positions_for_file(path, text, wanted)?;
+        if let Some(position) = positions.into_iter().next() {
+            definition_position = Some(position);
+            break;
+        }
+    }
+
+    let mut out: Vec<Symbol> = Vec::new();
+    if let Some((uri, line, character)) = definition_position {
+        let prepared = client.request(
+            "textDocument/prepareCallHierarchy",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
+        )?;
+        if let Some(items) = prepared.as_array() {
+            for item in items {
+                let incoming =
+                    client.request("callHierarchy/incomingCalls", json!({ "item": item }))?;
+                let Some(calls) = incoming.as_array() else {
+                    continue;
+                };
+                for call in calls {
+                    let Some(from) = call.get("from") else {
+                        continue;
+                    };
+                    let Some(symbol) = call_hierarchy_item_to_symbol(from) else {
+                        continue;
+                    };
+                    if !out.iter().any(|existing| {
+                        existing.path == symbol.path
+                            && existing.qualified_name == symbol.qualified_name
+                            && existing.start_line == symbol.start_line
+                    }) {
+                        out.push(symbol);
+                    }
+                    if out.len() >= max_matches {
+                        client.shutdown();
+                        return Ok(out);
+                    }
+                }
             }
         }
     }
@@ -473,6 +531,45 @@ fn symbol_from_range(
         end_line,
         line_slice(text, start_line, end_line),
     ))
+}
+
+fn call_hierarchy_item_to_symbol(item: &Value) -> Option<Symbol> {
+    let uri = item.get("uri").and_then(Value::as_str)?;
+    let path = path_from_uri(uri)?;
+    let name = item
+        .get("name")
+        .and_then(Value::as_str)
+        .map(clean_symbol_name)?;
+    let detail = item.get("detail").and_then(Value::as_str).unwrap_or("");
+    let qualified = if detail.is_empty() || name.contains("::") {
+        name.clone()
+    } else {
+        let prefix = detail
+            .trim()
+            .trim_matches(|ch| matches!(ch, '(' | ')' | '[' | ']'));
+        if prefix.is_empty() {
+            name.clone()
+        } else if prefix.split("::").last() == Some(name.as_str()) {
+            prefix.to_string()
+        } else {
+            format!("{prefix}::{name}")
+        }
+    };
+    let range = item.get("range")?;
+    let kind = item
+        .get("kind")
+        .and_then(Value::as_u64)
+        .and_then(lsp_kind)
+        .unwrap_or(SymbolKind::Function);
+    let text = read_text(&path).unwrap_or_default();
+    symbol_from_range(
+        &path,
+        &text,
+        range,
+        kind,
+        symbol_short_name(&name),
+        qualified,
+    )
 }
 
 fn lsp_kind(kind: u64) -> Option<SymbolKind> {

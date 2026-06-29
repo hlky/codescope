@@ -426,6 +426,19 @@ fn collect_c_family_callers(
     wanted: &str,
     max_matches: usize,
 ) -> Result<Vec<Symbol>, AppError> {
+    let options = clangd_options(common, search_root)?;
+    if common.backend == Backend::Lsp {
+        return crate::lsp::callers(files, &options, wanted, max_matches)
+            .map_err(AppError::Backend);
+    }
+    if common.backend == Backend::Auto
+        && crate::lsp::clangd_available()
+        && let Ok(symbols) = crate::lsp::callers(files, &options, wanted, max_matches)
+        && !symbols.is_empty()
+    {
+        return Ok(symbols);
+    }
+
     let symbols = collect_c_family_symbols(
         common,
         search_root,

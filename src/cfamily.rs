@@ -105,6 +105,7 @@ fn tree_sitter_symbols(
         text,
         language,
         tree.root_node(),
+        &mut Vec::new(),
         kind_filter,
         wanted,
         &mut out,
@@ -130,22 +131,38 @@ fn parse(path: &Path, text: &str) -> Option<tree_sitter::Tree> {
     parser.parse(text, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn visit(
     path: &Path,
     text: &str,
     language: Language,
     node: Node<'_>,
+    scope: &mut Vec<String>,
     kind_filter: Option<SymbolKindFilter>,
     wanted: Option<&str>,
     out: &mut Vec<Symbol>,
 ) {
     match node.kind() {
-        "function_definition" => add_function(path, text, language, node, kind_filter, wanted, out),
+        "namespace_definition" => {
+            if let Some(name) = node
+                .child_by_field_name("name")
+                .and_then(|n| node_text(n, text))
+            {
+                scope.push(name);
+                visit_children(path, text, language, node, scope, kind_filter, wanted, out);
+                scope.pop();
+                return;
+            }
+        }
+        "function_definition" => {
+            add_function(path, text, language, node, scope, kind_filter, wanted, out)
+        }
         "class_specifier" => add_type(
             path,
             text,
             language,
             node,
+            scope,
             SymbolKind::Class,
             kind_filter,
             wanted,
@@ -156,6 +173,7 @@ fn visit(
             text,
             language,
             node,
+            scope,
             SymbolKind::Struct,
             kind_filter,
             wanted,
@@ -166,27 +184,54 @@ fn visit(
             text,
             language,
             node,
+            scope,
             SymbolKind::Enum,
             kind_filter,
             wanted,
             out,
         ),
         "declaration" | "field_declaration" => {
-            add_variable(path, text, language, node, kind_filter, wanted, out)
+            add_variable(path, text, language, node, scope, kind_filter, wanted, out)
         }
         _ => {}
     }
+    if matches!(node.kind(), "class_specifier" | "struct_specifier")
+        && let Some(name) = node
+            .child_by_field_name("name")
+            .and_then(|n| node_text(n, text))
+    {
+        scope.push(name);
+        visit_children(path, text, language, node, scope, kind_filter, wanted, out);
+        scope.pop();
+        return;
+    }
+    visit_children(path, text, language, node, scope, kind_filter, wanted, out);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visit_children(
+    path: &Path,
+    text: &str,
+    language: Language,
+    node: Node<'_>,
+    scope: &mut Vec<String>,
+    kind_filter: Option<SymbolKindFilter>,
+    wanted: Option<&str>,
+    out: &mut Vec<Symbol>,
+) {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        visit(path, text, language, child, kind_filter, wanted, out);
+        visit(path, text, language, child, scope, kind_filter, wanted, out);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_function(
     path: &Path,
     text: &str,
     language: Language,
     node: Node<'_>,
+    scope: &[String],
     kind_filter: Option<SymbolKindFilter>,
     wanted: Option<&str>,
     out: &mut Vec<Symbol>,
@@ -195,9 +240,12 @@ fn add_function(
         return;
     }
     let declarator = node.child_by_field_name("declarator").unwrap_or(node);
-    let Some((name, qualified)) = function_name(declarator, text) else {
+    let Some((name, mut qualified)) = function_name(declarator, text) else {
         return;
     };
+    if !scope.is_empty() && !qualified.contains("::") {
+        qualified = format!("{}::{qualified}", scope.join("::"));
+    }
     if wanted
         .is_some_and(|wanted| !name_matches(&wanted.replace('.', "::"), &name, &qualified, "::"))
     {
@@ -221,6 +269,7 @@ fn add_type(
     text: &str,
     language: Language,
     node: Node<'_>,
+    scope: &[String],
     kind: SymbolKind,
     kind_filter: Option<SymbolKindFilter>,
     wanted: Option<&str>,
@@ -235,17 +284,26 @@ fn add_type(
     else {
         return;
     };
-    if wanted.is_some_and(|wanted| !name_matches(&wanted.replace('.', "::"), &name, &name, "::")) {
+    let qualified = if scope.is_empty() {
+        name.clone()
+    } else {
+        format!("{}::{name}", scope.join("::"))
+    };
+    if wanted
+        .is_some_and(|wanted| !name_matches(&wanted.replace('.', "::"), &name, &qualified, "::"))
+    {
         return;
     }
-    push_symbol(path, text, language, node, kind, name.clone(), name, out);
+    push_symbol(path, text, language, node, kind, name, qualified, out);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_variable(
     path: &Path,
     text: &str,
     language: Language,
     node: Node<'_>,
+    scope: &[String],
     kind_filter: Option<SymbolKindFilter>,
     wanted: Option<&str>,
     out: &mut Vec<Symbol>,
@@ -261,7 +319,14 @@ fn add_variable(
     let Some(name) = first_identifier(node, text) else {
         return;
     };
-    if wanted.is_some_and(|wanted| !name_matches(&wanted.replace('.', "::"), &name, &name, "::")) {
+    let qualified = if scope.is_empty() {
+        name.clone()
+    } else {
+        format!("{}::{name}", scope.join("::"))
+    };
+    if wanted
+        .is_some_and(|wanted| !name_matches(&wanted.replace('.', "::"), &name, &qualified, "::"))
+    {
         return;
     }
     push_symbol(
@@ -271,7 +336,7 @@ fn add_variable(
         node,
         SymbolKind::Variable,
         name.clone(),
-        name,
+        qualified,
         out,
     );
 }
@@ -377,6 +442,22 @@ fn lexical_symbols(
     if crate::model::kind_matches(kind_filter, SymbolKind::Function) {
         out.extend(lexical_functions(path, text, language, wanted));
     }
+    if kind_filter.is_none()
+        || matches!(
+            kind_filter,
+            Some(
+                SymbolKindFilter::All
+                    | SymbolKindFilter::Class
+                    | SymbolKindFilter::Struct
+                    | SymbolKindFilter::Enum
+            )
+        )
+    {
+        out.extend(lexical_types(path, text, language, kind_filter, wanted));
+    }
+    if crate::model::kind_matches(kind_filter, SymbolKind::Variable) {
+        out.extend(lexical_variables(path, text, language, wanted));
+    }
     out
 }
 
@@ -426,6 +507,127 @@ fn lexical_functions(
             SymbolKind::Function,
             short,
             found,
+            start_line,
+            end_line,
+            line_slice(text, start_line, end_line),
+        ));
+    }
+    out
+}
+
+fn lexical_types(
+    path: &Path,
+    text: &str,
+    language: Language,
+    kind_filter: Option<SymbolKindFilter>,
+    wanted: Option<&str>,
+) -> Vec<Symbol> {
+    let masked = mask_comments_and_strings(text);
+    let type_re =
+        Regex::new(r"\b(class|struct|enum(?:\s+class)?)\s+([A-Za-z_]\w*)[^;{]*\{").unwrap();
+    let mut out = Vec::new();
+    for captures in type_re.captures_iter(&masked) {
+        let Some(full) = captures.get(0) else {
+            continue;
+        };
+        let raw_kind = captures.get(1).map(|m| m.as_str()).unwrap_or("");
+        let kind = if raw_kind.starts_with("enum") {
+            SymbolKind::Enum
+        } else if raw_kind == "struct" {
+            SymbolKind::Struct
+        } else {
+            SymbolKind::Class
+        };
+        if !crate::model::kind_matches(kind_filter, kind) {
+            continue;
+        }
+        let name = captures
+            .get(2)
+            .map(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
+        if wanted
+            .is_some_and(|wanted| !name_matches(&wanted.replace('.', "::"), &name, &name, "::"))
+        {
+            continue;
+        }
+        let Some(open_brace) = masked[full.start()..full.end()]
+            .rfind('{')
+            .map(|idx| full.start() + idx)
+        else {
+            continue;
+        };
+        let Some(end_brace) = find_matching(&masked, open_brace, b'{', b'}') else {
+            continue;
+        };
+        let end = masked[end_brace..]
+            .find(';')
+            .map(|idx| end_brace + idx)
+            .unwrap_or(end_brace);
+        let start_line = text[..full.start()].bytes().filter(|b| *b == b'\n').count() + 1;
+        let end_line = text[..end].bytes().filter(|b| *b == b'\n').count() + 1;
+        out.push(Symbol::new(
+            path.to_path_buf(),
+            language,
+            "lexical",
+            kind,
+            name.clone(),
+            name,
+            start_line,
+            end_line,
+            line_slice(text, start_line, end_line),
+        ));
+    }
+    out
+}
+
+fn lexical_variables(
+    path: &Path,
+    text: &str,
+    language: Language,
+    wanted: Option<&str>,
+) -> Vec<Symbol> {
+    let masked = mask_comments_and_strings(text);
+    let declaration_re = Regex::new(
+        r"(?m)^\s*(?:static\s+|extern\s+|constexpr\s+|const\s+|volatile\s+|__device__\s+|__constant__\s+)*[A-Za-z_][\w:<>,\s*&]*\s+([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*(?:=[^;]*)?;",
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    for captures in declaration_re.captures_iter(&masked) {
+        let Some(full) = captures.get(0) else {
+            continue;
+        };
+        let line = &masked[full.start()..full.end()];
+        let stripped = line.trim_start();
+        if line.contains('(')
+            || line.contains(')')
+            || stripped.starts_with('#')
+            || stripped.starts_with("return")
+            || stripped.starts_with("using")
+            || stripped.starts_with("namespace")
+            || stripped.starts_with("typedef")
+        {
+            continue;
+        }
+        let name = captures
+            .get(1)
+            .map(|m| m.as_str())
+            .unwrap_or("")
+            .to_string();
+        if wanted
+            .is_some_and(|wanted| !name_matches(&wanted.replace('.', "::"), &name, &name, "::"))
+        {
+            continue;
+        }
+        let start_line = text[..full.start()].bytes().filter(|b| *b == b'\n').count() + 1;
+        let end_line = text[..full.end()].bytes().filter(|b| *b == b'\n').count() + 1;
+        out.push(Symbol::new(
+            path.to_path_buf(),
+            language,
+            "lexical",
+            SymbolKind::Variable,
+            name.clone(),
+            name,
             start_line,
             end_line,
             line_slice(text, start_line, end_line),

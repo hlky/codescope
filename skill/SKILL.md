@@ -31,7 +31,7 @@ codescope context --name parse_config --path src
 - Python names may be unqualified (`foo`) or qualified (`ClassName.foo`, `Outer.Inner.foo`).
 - Python variables include module constants, class attributes, and local assignments.
 - C-family extraction covers C, C++, CUDA (`.cu`, `.cuh`), and HIP (`.hip`) sources.
-- C-family symbol and reference discovery uses clangd in `--backend auto` when available, falling back to tree-sitter or lexical extraction.
+- C-family symbol, reference, and caller discovery uses clangd in `--backend auto` when available, falling back to tree-sitter or lexical extraction.
 - Use `--backend lsp` to require semantic C-family results, and pass `--compile-commands-dir` when the project has a non-default compilation database.
 - Use `--root` when the clangd project root differs from the search `--path`.
 - Use `--json` when stable fields are needed: `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`.

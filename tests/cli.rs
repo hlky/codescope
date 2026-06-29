@@ -24,6 +24,10 @@ class Widget:
 
 def caller():
     return helper()
+
+def unrelated_build():
+    build = 3
+    return build
 "#
         .trim_start(),
     )
@@ -49,11 +53,94 @@ __global__ void kernel(int *out) {
 int helper() {
     return 42;
 }
+
+int GLOBAL_COUNT = 7;
 "#
         .trim_start(),
     )
     .unwrap();
     dir
+}
+
+#[test]
+fn tree_sitter_cfamily_qualified_names_include_scope() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-function",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "Demo::Thing::method",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Demo::Thing::method"));
+}
+
+#[test]
+fn lexical_backend_extracts_types_and_variables() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-symbol",
+            "--backend",
+            "lexical",
+            "--name",
+            "Thing",
+            "--kind",
+            "class",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("class, Thing"));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-variable",
+            "--backend",
+            "lexical",
+            "--name",
+            "GLOBAL_COUNT",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GLOBAL_COUNT"));
+}
+
+#[test]
+fn qualified_python_references_do_not_match_bare_identifiers_or_definitions() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "references",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "Widget.build",
+            "--lang",
+            "python",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .code(1);
 }
 
 #[test]
@@ -234,4 +321,40 @@ fn lsp_backend_runs_when_clangd_is_available() {
         .assert()
         .success()
         .stdout(predicate::str::contains("helper"));
+}
+
+#[test]
+fn lsp_callers_use_clangd_call_hierarchy_when_available() {
+    if which::which("clangd").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("simple.cpp"),
+        r#"
+namespace Demo {
+int helper() { return 1; }
+int caller() { return helper(); }
+}
+"#
+        .trim_start(),
+    )
+    .unwrap();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "callers",
+            "--backend",
+            "lsp",
+            "--lang",
+            "cpp",
+            "--name",
+            "helper",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("clangd"))
+        .stdout(predicate::str::contains("method").or(predicate::str::contains("caller")));
 }

@@ -38,6 +38,7 @@ pub fn references(path: &Path, text: &str, wanted: &str, max_matches: usize) -> 
         .next()
         .unwrap_or(wanted)
         .to_string();
+    let qualified_lookup = wanted.contains('.') || wanted.contains("::");
     let mut out = Vec::new();
     visit_all(tree.root_node(), &mut |node| {
         if out.len() >= max_matches {
@@ -45,6 +46,8 @@ pub fn references(path: &Path, text: &str, wanted: &str, max_matches: usize) -> 
         }
         if matches!(node.kind(), "identifier" | "attribute")
             && node_text(node, text).is_some_and(|value| value == short)
+            && !is_definition_name(node)
+            && (!qualified_lookup || is_attribute_name(node))
         {
             let start_line = node.start_position().row + 1;
             out.push(Symbol::new(
@@ -391,6 +394,30 @@ fn contains_python_call(source: &str, name: &str) -> bool {
     let pattern =
         regex::Regex::new(&format!(r"(^|[^A-Za-z0-9_]){}\s*\(", regex::escape(name))).ok();
     pattern.is_some_and(|pattern| pattern.is_match(source))
+}
+
+fn is_definition_name(node: Node<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    matches!(parent.kind(), "function_definition" | "class_definition")
+        && parent
+            .child_by_field_name("name")
+            .is_some_and(|name| same_node(name, node))
+}
+
+fn is_attribute_name(node: Node<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    parent.kind() == "attribute"
+        && parent
+            .child_by_field_name("attribute")
+            .is_some_and(|attribute| same_node(attribute, node))
+}
+
+fn same_node(left: Node<'_>, right: Node<'_>) -> bool {
+    left.start_byte() == right.start_byte() && left.end_byte() == right.end_byte()
 }
 
 #[allow(dead_code)]
