@@ -18,11 +18,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
             archive: codescope-x86_64-unknown-linux-gnu.tar.gz
             bin: codescope
-          - os: macos-latest
+          - os: macos-15
             target: x86_64-apple-darwin
             archive: codescope-x86_64-apple-darwin.tar.gz
             bin: codescope
-          - os: macos-latest
+          - os: macos-15
             target: aarch64-apple-darwin
             archive: codescope-aarch64-apple-darwin.tar.gz
             bin: codescope
