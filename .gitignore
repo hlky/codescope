@@ -1,0 +1,11 @@
+/target/
+/.work/
+/.idea/
+/.vscode/
+*.pdb
+*.profraw
+*.profdata
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
