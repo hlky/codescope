@@ -115,3 +115,32 @@ pub fn line_for_byte(text: &str, byte: usize) -> usize {
         .count()
         + 1
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn language_detection_covers_supported_extensions() {
+        assert_eq!(language_for_path(Path::new("x.py")), Some(Language::Python));
+        assert_eq!(language_for_path(Path::new("x.c")), Some(Language::C));
+        assert_eq!(language_for_path(Path::new("x.hpp")), Some(Language::Cpp));
+        assert_eq!(language_for_path(Path::new("x.cu")), Some(Language::Cuda));
+        assert_eq!(language_for_path(Path::new("x.hip")), Some(Language::Hip));
+        assert_eq!(language_for_path(Path::new("x.txt")), None);
+    }
+
+    #[test]
+    fn line_slice_preserves_requested_lines_with_trailing_newline() {
+        assert_eq!(line_slice("a\nb\nc\n", 2, 3), "b\nc\n");
+    }
+
+    #[test]
+    fn line_for_byte_counts_newlines_before_offset() {
+        assert_eq!(line_for_byte("a\nb\nc", 0), 1);
+        assert_eq!(line_for_byte("a\nb\nc", 2), 2);
+        assert_eq!(line_for_byte("a\nb\nc", 99), 3);
+    }
+}

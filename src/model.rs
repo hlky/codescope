@@ -165,3 +165,61 @@ pub fn name_matches(wanted: &str, short: &str, qualified: &str, sep: &str) -> bo
         qualified.ends_with(&format!(".{normalized}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn python_name_matching_accepts_suffix_qualification() {
+        assert!(name_matches("method", "method", "Outer.Inner.method", "."));
+        assert!(name_matches(
+            "Inner.method",
+            "method",
+            "Outer.Inner.method",
+            "."
+        ));
+        assert!(!name_matches("other", "method", "Outer.Inner.method", "."));
+    }
+
+    #[test]
+    fn c_family_name_matching_accepts_dot_or_colon_qualification() {
+        assert!(name_matches(
+            "Namespace::Class::method",
+            "method",
+            "Namespace::Class::method",
+            "::"
+        ));
+        assert!(name_matches(
+            "Class.method",
+            "method",
+            "Namespace::Class::method",
+            "::"
+        ));
+        assert!(name_matches(
+            "Class::method",
+            "method",
+            "Namespace::Class::method",
+            "::"
+        ));
+        assert!(!name_matches(
+            "Other::method",
+            "method",
+            "Namespace::Class::method",
+            "::"
+        ));
+    }
+
+    #[test]
+    fn kind_filter_matches_all_by_default() {
+        assert!(kind_matches(None, SymbolKind::Function));
+        assert!(kind_matches(
+            Some(SymbolKindFilter::All),
+            SymbolKind::Variable
+        ));
+        assert!(!kind_matches(
+            Some(SymbolKindFilter::Class),
+            SymbolKind::Struct
+        ));
+    }
+}

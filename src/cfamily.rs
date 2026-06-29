@@ -14,8 +14,7 @@ pub fn symbols(
     wanted: Option<&str>,
 ) -> anyhow::Result<Vec<Symbol>> {
     match backend {
-        Backend::Lsp => anyhow::bail!("LSP backend is not implemented yet"),
-        Backend::Auto | Backend::TreeSitter => {
+        Backend::Auto | Backend::Lsp | Backend::TreeSitter => {
             Ok(tree_sitter_symbols(path, text, kind_filter, wanted))
         }
         Backend::Lexical => Ok(lexical_symbols(path, text, kind_filter, wanted)),
