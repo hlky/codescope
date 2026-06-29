@@ -3,7 +3,7 @@ name = "codescope"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/openai/codescope"
+repository = "https://github.com/hlky/codescope"
 description = "Symbol listing, extraction, references, callers, and context for Python and C-family code."
 
 [dependencies]
