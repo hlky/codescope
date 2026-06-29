@@ -64,10 +64,14 @@ if (-not $installedFromRelease) {
     Copy-Item -Force target\release\codescope.exe (Join-Path $BinaryDir "codescope.exe")
 }
 
-$skillDir = Join-Path $CodexHome "skills\extract-function"
+$skillDir = Join-Path $CodexHome "skills\codescope"
 New-Item -ItemType Directory -Force $skillDir | Out-Null
 Copy-Item -Force skill\SKILL.md (Join-Path $skillDir "SKILL.md")
+$legacySkillDir = Join-Path $CodexHome "skills\extract-function"
+if (Test-Path $legacySkillDir) {
+    Remove-Item -Recurse -Force $legacySkillDir
+}
 
 Write-Host "Installed codescope.exe to $BinaryDir"
-Write-Host "Installed extract-function skill to $skillDir"
+Write-Host "Installed codescope skill to $skillDir"
 Write-Host "Ensure $BinaryDir is on PATH before using the skill."

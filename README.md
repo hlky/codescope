@@ -39,7 +39,7 @@ To build from the current checkout instead:
 .\scripts\install-skill.ps1 -FromSource
 ```
 
-The install script copies `codescope.exe` into `%USERPROFILE%\.codex\bin` and installs the skill metadata into `%USERPROFILE%\.codex\skills\extract-function`. Release downloads are verified against `SHA256SUMS` when available.
+The install script copies `codescope.exe` into `%USERPROFILE%\.codex\bin` and installs the skill metadata into `%USERPROFILE%\.codex\skills\codescope`. Release downloads are verified against `SHA256SUMS` when available.
 
 ## Exit Codes
 

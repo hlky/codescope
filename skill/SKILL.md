@@ -1,11 +1,11 @@
 ---
-name: extract-function
-description: Inspect Python, C, C++, CUDA, and HIP code symbols with the production Rust codescope binary before opening large source files.
+name: codescope
+description: Inspect Python, C, C++, CUDA, and HIP symbols before opening large source files.
 ---
 
-# Extract Function
+# Codescope
 
-Use `codescope` before opening large source files when the task is centered on known or fuzzy Python, C, C++, CUDA, or HIP symbols.
+Use `codescope` when a task needs focused source context for known or fuzzy Python, C, C++, CUDA, or HIP symbols.
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ codescope context --name parse_config --path src
 - Python names may be unqualified (`foo`) or qualified (`ClassName.foo`, `Outer.Inner.foo`).
 - Python variables include module constants, class attributes, and local assignments.
 - C-family extraction covers C, C++, CUDA (`.cu`, `.cuh`), and HIP (`.hip`) sources.
-- C-family symbol, reference, and caller discovery uses clangd in `--backend auto` when available, falling back to tree-sitter or lexical extraction.
+- C-family symbol, reference, and caller discovery uses clangd in `--backend auto` when available, with tree-sitter or lexical fallback.
 - Use `--backend lsp` to require semantic C-family results, and pass `--compile-commands-dir` when the project has a non-default compilation database.
 - Use `--root` when the clangd project root differs from the search `--path`.
 - Use `--json` when stable fields are needed: `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`.
@@ -43,5 +43,5 @@ codescope context --name parse_config --path src
 3. Use `codescope extract-symbol` for classes, structs, enums, and mixed symbol lookup.
 4. Use `codescope extract-variable` for constants, globals, fields, and Python assignments; add `--scope` for class/function-scoped variables.
 5. Use `codescope references` or `codescope callers` before opening broad call-site regions.
-6. Use `codescope context` when the symbol plus imports/includes is enough context for reasoning.
+6. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
 7. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.
