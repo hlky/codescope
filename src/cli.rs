@@ -5,6 +5,7 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 
 use crate::context::add_import_context;
+use crate::lsp::ClangdOptions;
 use crate::model::{Backend, Language, Symbol, SymbolKindFilter};
 use crate::workspace::{language_for_path, read_text, source_files};
 
@@ -226,17 +227,13 @@ fn collect_symbols(
     kind: Option<SymbolKindFilter>,
     wanted: Option<&str>,
 ) -> Result<Vec<Symbol>, AppError> {
-    if common.backend == Backend::Lsp {
-        return Err(AppError::Backend(anyhow::anyhow!(
-            "LSP backend is not implemented yet; use --backend auto or --backend tree-sitter"
-        )));
-    }
     let path = common
         .path
         .canonicalize()
         .with_context(|| format!("failed to resolve --path {}", common.path.display()))
         .map_err(AppError::Config)?;
     let mut out = Vec::new();
+    let mut c_family = Vec::new();
     for file in source_files(&path, common.lang) {
         let Some(text) = read_text(&file) else {
             continue;
@@ -246,10 +243,7 @@ fn collect_symbols(
                 out.extend(crate::python::symbols(&file, &text, kind, wanted))
             }
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-                out.extend(
-                    crate::cfamily::symbols(&file, &text, common.backend, kind, wanted)
-                        .map_err(AppError::Backend)?,
-                );
+                c_family.push((file, text));
             }
             _ => {}
         }
@@ -257,21 +251,27 @@ fn collect_symbols(
             break;
         }
     }
+    if !c_family.is_empty() && out.len() < common.max_matches {
+        out.extend(collect_c_family_symbols(
+            common,
+            &path,
+            &c_family,
+            kind,
+            wanted,
+            common.max_matches - out.len(),
+        )?);
+    }
     Ok(out)
 }
 
 fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, AppError> {
-    if common.backend == Backend::Lsp {
-        return Err(AppError::Backend(anyhow::anyhow!(
-            "LSP references are not implemented yet; use --backend auto or --backend tree-sitter"
-        )));
-    }
     let path = common
         .path
         .canonicalize()
         .with_context(|| format!("failed to resolve --path {}", common.path.display()))
         .map_err(AppError::Config)?;
     let mut out = Vec::new();
+    let mut c_family = Vec::new();
     for file in source_files(&path, common.lang) {
         let Some(text) = read_text(&file) else {
             continue;
@@ -284,12 +284,7 @@ fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, 
                 common.max_matches - out.len(),
             )),
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-                out.extend(crate::cfamily::references(
-                    &file,
-                    &text,
-                    wanted,
-                    common.max_matches - out.len(),
-                ));
+                c_family.push((file, text));
             }
             _ => {}
         }
@@ -297,21 +292,26 @@ fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, 
             break;
         }
     }
+    if !c_family.is_empty() && out.len() < common.max_matches {
+        out.extend(collect_c_family_references(
+            common,
+            &path,
+            &c_family,
+            wanted,
+            common.max_matches - out.len(),
+        )?);
+    }
     Ok(out)
 }
 
 fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, AppError> {
-    if common.backend == Backend::Lsp {
-        return Err(AppError::Backend(anyhow::anyhow!(
-            "LSP callers are not implemented yet; use --backend auto or --backend tree-sitter"
-        )));
-    }
     let path = common
         .path
         .canonicalize()
         .with_context(|| format!("failed to resolve --path {}", common.path.display()))
         .map_err(AppError::Config)?;
     let mut out = Vec::new();
+    let mut c_family = Vec::new();
     for file in source_files(&path, common.lang) {
         let Some(text) = read_text(&file) else {
             continue;
@@ -324,16 +324,7 @@ fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, App
                 common.max_matches - out.len(),
             )),
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-                out.extend(
-                    crate::cfamily::callers(
-                        &file,
-                        &text,
-                        common.backend,
-                        wanted,
-                        common.max_matches - out.len(),
-                    )
-                    .map_err(AppError::Backend)?,
-                );
+                c_family.push((file, text));
             }
             _ => {}
         }
@@ -341,7 +332,144 @@ fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, App
             break;
         }
     }
+    if !c_family.is_empty() && out.len() < common.max_matches {
+        out.extend(collect_c_family_callers(
+            common,
+            &path,
+            &c_family,
+            wanted,
+            common.max_matches - out.len(),
+        )?);
+    }
     Ok(out)
+}
+
+fn collect_c_family_symbols(
+    common: &CommonArgs,
+    search_root: &std::path::Path,
+    files: &[(PathBuf, String)],
+    kind: Option<SymbolKindFilter>,
+    wanted: Option<&str>,
+    max_matches: usize,
+) -> Result<Vec<Symbol>, AppError> {
+    let options = clangd_options(common, search_root)?;
+    if common.backend == Backend::Lsp {
+        return crate::lsp::document_symbols(files, &options, kind, wanted, max_matches)
+            .map_err(AppError::Backend);
+    }
+    if common.backend == Backend::Auto && crate::lsp::clangd_available() {
+        if let Ok(symbols) =
+            crate::lsp::document_symbols(files, &options, kind, wanted, max_matches)
+        {
+            if !symbols.is_empty() {
+                return Ok(symbols);
+            }
+        }
+    }
+
+    let backend = match common.backend {
+        Backend::Lexical => Backend::Lexical,
+        _ => Backend::TreeSitter,
+    };
+    let mut out = Vec::new();
+    for (file, text) in files {
+        out.extend(
+            crate::cfamily::symbols(file, text, backend, kind, wanted)
+                .map_err(AppError::Backend)?,
+        );
+        if out.len() >= max_matches {
+            break;
+        }
+    }
+    out.truncate(max_matches);
+    Ok(out)
+}
+
+fn collect_c_family_references(
+    common: &CommonArgs,
+    search_root: &std::path::Path,
+    files: &[(PathBuf, String)],
+    wanted: &str,
+    max_matches: usize,
+) -> Result<Vec<Symbol>, AppError> {
+    let options = clangd_options(common, search_root)?;
+    if common.backend == Backend::Lsp {
+        return crate::lsp::references(files, &options, wanted, max_matches)
+            .map_err(AppError::Backend);
+    }
+    if common.backend == Backend::Auto && crate::lsp::clangd_available() {
+        if let Ok(symbols) = crate::lsp::references(files, &options, wanted, max_matches) {
+            if !symbols.is_empty() {
+                return Ok(symbols);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (file, text) in files {
+        out.extend(crate::cfamily::references(
+            file,
+            text,
+            wanted,
+            max_matches - out.len(),
+        ));
+        if out.len() >= max_matches {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn collect_c_family_callers(
+    common: &CommonArgs,
+    search_root: &std::path::Path,
+    files: &[(PathBuf, String)],
+    wanted: &str,
+    max_matches: usize,
+) -> Result<Vec<Symbol>, AppError> {
+    let symbols = collect_c_family_symbols(
+        common,
+        search_root,
+        files,
+        Some(SymbolKindFilter::Function),
+        None,
+        usize::MAX,
+    )?;
+    let short = wanted
+        .replace('.', "::")
+        .rsplit("::")
+        .next()
+        .unwrap_or(wanted)
+        .to_string();
+    let pattern = regex::Regex::new(&format!(r"(^|[^A-Za-z0-9_]){}\s*\(", regex::escape(&short)))
+        .map_err(|error| AppError::Config(error.into()))?;
+    Ok(symbols
+        .into_iter()
+        .filter(|symbol| symbol.name != short && symbol.qualified_name != wanted)
+        .filter(|symbol| pattern.is_match(&symbol.source))
+        .take(max_matches)
+        .collect())
+}
+
+fn clangd_options(
+    common: &CommonArgs,
+    search_root: &std::path::Path,
+) -> Result<ClangdOptions, AppError> {
+    let root = match &common.root {
+        Some(root) => root
+            .canonicalize()
+            .with_context(|| format!("failed to resolve --root {}", root.display()))
+            .map_err(AppError::Config)?,
+        None if search_root.is_dir() => search_root.to_path_buf(),
+        None => search_root
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| search_root.to_path_buf()),
+    };
+    Ok(ClangdOptions {
+        root,
+        compile_commands_dir: common.compile_commands_dir.clone(),
+    })
 }
 
 enum AppError {

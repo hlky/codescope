@@ -61,7 +61,7 @@ fn list_functions_outputs_plain_records() {
     let dir = fixture();
     Command::cargo_bin("codescope")
         .unwrap()
-        .args(["list-functions", "--path"])
+        .args(["list-functions", "--backend", "tree-sitter", "--path"])
         .arg(dir.path())
         .assert()
         .success()
@@ -74,7 +74,14 @@ fn extract_python_decorated_async_function_outputs_source() {
     let dir = fixture();
     Command::cargo_bin("codescope")
         .unwrap()
-        .args(["extract-function", "--name", "Widget.build", "--path"])
+        .args([
+            "extract-function",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "Widget.build",
+            "--path",
+        ])
         .arg(dir.path())
         .assert()
         .success()
@@ -93,6 +100,8 @@ fn extract_symbol_json_has_contract_fields() {
             "Widget",
             "--kind",
             "class",
+            "--backend",
+            "tree-sitter",
             "--json",
             "--path",
         ])
@@ -114,6 +123,8 @@ fn extract_variable_supports_scope_filter() {
             "VALUE",
             "--scope",
             "Widget",
+            "--backend",
+            "tree-sitter",
             "--path",
         ])
         .arg(dir.path())
@@ -127,7 +138,14 @@ fn references_and_callers_work() {
     let dir = fixture();
     Command::cargo_bin("codescope")
         .unwrap()
-        .args(["references", "--name", "helper", "--path"])
+        .args([
+            "references",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "helper",
+            "--path",
+        ])
         .arg(dir.path())
         .assert()
         .success()
@@ -135,7 +153,14 @@ fn references_and_callers_work() {
 
     Command::cargo_bin("codescope")
         .unwrap()
-        .args(["callers", "--name", "helper", "--path"])
+        .args([
+            "callers",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "helper",
+            "--path",
+        ])
         .arg(dir.path())
         .assert()
         .success()
@@ -147,7 +172,16 @@ fn context_includes_imports() {
     let dir = fixture();
     Command::cargo_bin("codescope")
         .unwrap()
-        .args(["context", "--name", "helper", "--lang", "python", "--path"])
+        .args([
+            "context",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "helper",
+            "--lang",
+            "python",
+            "--path",
+        ])
         .arg(dir.path())
         .assert()
         .success()
@@ -165,10 +199,39 @@ fn no_match_exits_one_and_lsp_exits_three() {
         .assert()
         .code(1);
 
+    let mut lsp = Command::cargo_bin("codescope").unwrap();
+    lsp.env("PATH", "");
+    lsp.args([
+        "list-functions",
+        "--backend",
+        "lsp",
+        "--lang",
+        "cpp",
+        "--path",
+    ])
+    .arg(dir.path())
+    .assert()
+    .code(3);
+}
+
+#[test]
+fn lsp_backend_runs_when_clangd_is_available() {
+    if which::which("clangd").is_err() {
+        return;
+    }
+    let dir = fixture();
     Command::cargo_bin("codescope")
         .unwrap()
-        .args(["list-functions", "--backend", "lsp", "--path"])
+        .args([
+            "list-functions",
+            "--backend",
+            "lsp",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
         .arg(dir.path())
         .assert()
-        .code(3);
+        .success()
+        .stdout(predicate::str::contains("helper"));
 }
