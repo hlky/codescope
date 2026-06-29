@@ -3,7 +3,7 @@ use std::path::Path;
 use tree_sitter::{Node, Parser, TreeCursor};
 
 use crate::model::{Language, Symbol, SymbolKind, SymbolKindFilter, name_matches};
-use crate::workspace::{line_for_byte, line_slice};
+use crate::workspace::line_slice;
 
 pub fn symbols(
     path: &Path,
@@ -418,9 +418,4 @@ fn is_attribute_name(node: Node<'_>) -> bool {
 
 fn same_node(left: Node<'_>, right: Node<'_>) -> bool {
     left.start_byte() == right.start_byte() && left.end_byte() == right.end_byte()
-}
-
-#[allow(dead_code)]
-fn line_for_node_start(text: &str, node: Node<'_>) -> usize {
-    line_for_byte(text, node.start_byte())
 }
