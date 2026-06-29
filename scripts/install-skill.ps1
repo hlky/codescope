@@ -67,10 +67,6 @@ if (-not $installedFromRelease) {
 $skillDir = Join-Path $CodexHome "skills\codescope"
 New-Item -ItemType Directory -Force $skillDir | Out-Null
 Copy-Item -Force skill\SKILL.md (Join-Path $skillDir "SKILL.md")
-$legacySkillDir = Join-Path $CodexHome "skills\extract-function"
-if (Test-Path $legacySkillDir) {
-    Remove-Item -Recurse -Force $legacySkillDir
-}
 
 Write-Host "Installed codescope.exe to $BinaryDir"
 Write-Host "Installed codescope skill to $skillDir"
