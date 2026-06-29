@@ -14,7 +14,25 @@ codescope callers --name foo --path .
 codescope context --name foo --path .
 ```
 
-The first production slice supports Python AST-backed extraction and a lexical C-family backend for C, C++, CUDA, and HIP. The CLI already accepts the backend and clangd-related flags so clangd LSP support can be added behind the same contract.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, and tree-sitter/lexical fallback for C, C++, CUDA, and HIP.
+
+Current implementation:
+
+- Python structural parsing via tree-sitter.
+- C-family semantic symbols/references via clangd LSP when available.
+- C-family structural fallback via tree-sitter and lexical scanning.
+- Codex skill packaging in `skill/SKILL.md`.
+
+See [docs/USAGE.md](docs/USAGE.md) for command details.
+
+## Install Locally
+
+```powershell
+cargo build --release
+.\scripts\install-skill.ps1
+```
+
+The install script copies `codescope.exe` into `%USERPROFILE%\.codex\bin` and installs the skill metadata into `%USERPROFILE%\.codex\skills\extract-function`.
 
 ## Exit Codes
 

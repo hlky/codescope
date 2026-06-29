@@ -215,6 +215,7 @@ fn add_function(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_type(
     path: &Path,
     text: &str,
@@ -275,6 +276,7 @@ fn add_variable(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_symbol(
     path: &Path,
     text: &str,

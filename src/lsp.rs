@@ -210,6 +210,7 @@ impl ClangdClient {
         Ok(out)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn visit_document_symbols(
         &self,
         path: &Path,
@@ -239,12 +240,10 @@ impl ClangdClient {
                     && wanted.is_none_or(|wanted| {
                         name_matches(&wanted.replace('.', "::"), &short, &qualified, "::")
                     })
-                {
-                    if let Some(symbol) =
+                    && let Some(symbol) =
                         symbol_from_lsp(path, text, raw, kind, short, qualified.clone())
-                    {
-                        out.push(symbol);
-                    }
+                {
+                    out.push(symbol);
                 }
             }
             let container = raw

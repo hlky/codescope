@@ -357,14 +357,13 @@ fn collect_c_family_symbols(
         return crate::lsp::document_symbols(files, &options, kind, wanted, max_matches)
             .map_err(AppError::Backend);
     }
-    if common.backend == Backend::Auto && crate::lsp::clangd_available() {
-        if let Ok(symbols) =
+    if common.backend == Backend::Auto
+        && crate::lsp::clangd_available()
+        && let Ok(symbols) =
             crate::lsp::document_symbols(files, &options, kind, wanted, max_matches)
-        {
-            if !symbols.is_empty() {
-                return Ok(symbols);
-            }
-        }
+        && !symbols.is_empty()
+    {
+        return Ok(symbols);
     }
 
     let backend = match common.backend {
@@ -397,12 +396,12 @@ fn collect_c_family_references(
         return crate::lsp::references(files, &options, wanted, max_matches)
             .map_err(AppError::Backend);
     }
-    if common.backend == Backend::Auto && crate::lsp::clangd_available() {
-        if let Ok(symbols) = crate::lsp::references(files, &options, wanted, max_matches) {
-            if !symbols.is_empty() {
-                return Ok(symbols);
-            }
-        }
+    if common.backend == Backend::Auto
+        && crate::lsp::clangd_available()
+        && let Ok(symbols) = crate::lsp::references(files, &options, wanted, max_matches)
+        && !symbols.is_empty()
+    {
+        return Ok(symbols);
     }
 
     let mut out = Vec::new();

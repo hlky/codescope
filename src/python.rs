@@ -218,6 +218,7 @@ fn visit_stmt_list(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn visit_body(
     path: &Path,
     text: &str,

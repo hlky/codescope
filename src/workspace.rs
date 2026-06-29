@@ -43,10 +43,10 @@ pub fn language_allowed(language: Language, filter: Option<LanguageFilter>) -> b
 pub fn source_files(path: &Path, filter: Option<LanguageFilter>) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if path.is_file() {
-        if let Some(language) = language_for_path(path) {
-            if language_allowed(language, filter) {
-                files.push(path.to_path_buf());
-            }
+        if let Some(language) = language_for_path(path)
+            && language_allowed(language, filter)
+        {
+            files.push(path.to_path_buf());
         }
         return files;
     }
@@ -82,10 +82,10 @@ pub fn source_files(path: &Path, filter: Option<LanguageFilter>) -> Vec<PathBuf>
         if !file_path.is_file() {
             continue;
         }
-        if let Some(language) = language_for_path(file_path) {
-            if language_allowed(language, filter) {
-                files.push(file_path.to_path_buf());
-            }
+        if let Some(language) = language_for_path(file_path)
+            && language_allowed(language, filter)
+        {
+            files.push(file_path.to_path_buf());
         }
     }
     files.sort();
