@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.1 - 2026-06-29
+
+- Added tree-sitter backed Markdown heading discovery with `list-headings`.
+- Added Markdown section extraction with `extract-section`.
+- Added `markdown` language filtering and `heading` symbol kind support.
+- Updated documentation and Codex skill metadata for Markdown workflows.
+
 ## v0.1.0 - 2026-06-29
 
 Initial production release.
