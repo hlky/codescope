@@ -12,6 +12,7 @@ New-Item -ItemType Directory -Force $BinaryDir | Out-Null
 
 $installedFromRelease = $false
 if (-not $FromSource) {
+    $tmp = $null
     try {
         $releaseUri = if ($Version -eq "latest") {
             "https://api.github.com/repos/$Repo/releases/latest"
@@ -47,11 +48,14 @@ if (-not $FromSource) {
         }
         Expand-Archive -Path $archive -DestinationPath $tmp -Force
         Copy-Item -Force (Join-Path $tmp "codescope.exe") (Join-Path $BinaryDir "codescope.exe")
-        Remove-Item -Recurse -Force $tmp
         $installedFromRelease = $true
     } catch {
         Write-Warning "Release install failed: $_"
         Write-Warning "Falling back to local cargo build. Pass -FromSource to skip release lookup."
+    } finally {
+        if ($null -ne $tmp -and (Test-Path $tmp)) {
+            Remove-Item -Recurse -Force $tmp
+        }
     }
 }
 
