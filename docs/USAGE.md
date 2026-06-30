@@ -11,6 +11,7 @@ codescope extract-symbol --name Foo --kind class --path .
 codescope extract-variable --name CONFIG --scope Foo --path .
 codescope extract-variable --name MY_LIST --lang cmake --path CMakeLists.txt
 codescope extract-block --name ENABLE_FEATURE --lang cmake --path CMakeLists.txt
+codescope extract-block --name ENABLE_FEATURE --contains generated_target --smallest --lang cmake --path CMakeLists.txt
 codescope extract-symbol --name my_target --kind target --lang cmake --path CMakeLists.txt
 codescope list-headings --path docs
 codescope extract-section --name Usage --path README.md
@@ -37,7 +38,7 @@ C-family files use clangd in `auto` when available, then fall back to tree-sitte
 
 Markdown uses tree-sitter for block parsing. `list-headings` returns heading records with qualified names based on heading nesting. `extract-section` returns the heading and its content until the next heading at the same or higher level. Fenced code headings are ignored by the parser.
 
-CMake uses lexical command parsing for `CMakeLists.txt` and `*.cmake`. `extract-variable` returns full `set(...)`, `option(...)`, `unset(...)`, and mutating `list(...)` commands for a variable. `extract-block` returns matched `if/foreach/function/macro/while` blocks by command name, full header, or argument token. `extract-symbol --kind target` returns an `add_library(...)`, `add_executable(...)`, or `pybind11_add_module(...)` target with related `target_*`, `add_dependencies(...)`, `set_property(...)`, and `install(TARGETS ...)` commands. `references` finds variable and target tokens, including `${VAR}` references.
+CMake uses lexical command parsing for `CMakeLists.txt` and `*.cmake`. `extract-variable` returns full `set(...)`, `option(...)`, `unset(...)`, and mutating `list(...)` commands for a variable. `extract-block` returns matched `if/foreach/function/macro/while` blocks by command name, full header, or argument token. Add `--contains TEXT` to narrow to nested blocks containing text, `--around-line N` to narrow to blocks containing a line, and `--largest` or `--smallest` to choose one block from the narrowed result. `extract-symbol --kind target` returns an `add_library(...)`, `add_executable(...)`, or `pybind11_add_module(...)` target with related `target_*`, `add_dependencies(...)`, `set_property(...)`, `install(TARGETS ...)`, and generator-expression references such as `$<TARGET_LINKER_FILE:target>`. `references` finds variable and target tokens, including `${VAR}` references.
 
 ## Exit Codes
 

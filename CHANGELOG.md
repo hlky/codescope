@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.3 - 2026-06-30
+
+- Added CMake block result narrowing with `--contains`, `--around-line`, `--largest`, and `--smallest`.
+- Expanded CMake target extraction to include generator-expression target references such as `$<TARGET_LINKER_FILE:target>`.
+
 ## v0.1.2 - 2026-06-30
 
 - Added CMake file discovery for `CMakeLists.txt` and `*.cmake`.

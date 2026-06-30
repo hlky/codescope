@@ -11,6 +11,7 @@ codescope extract-symbol --name Foo --kind class --path .
 codescope extract-variable --name CONFIG --scope Foo --path .
 codescope extract-variable --name MY_LIST --lang cmake --path CMakeLists.txt
 codescope extract-block --name ENABLE_FEATURE --lang cmake --path CMakeLists.txt
+codescope extract-block --name ENABLE_FEATURE --contains generated_target --smallest --lang cmake --path CMakeLists.txt
 codescope extract-symbol --name my_target --kind target --lang cmake --path CMakeLists.txt
 codescope list-headings --path docs
 codescope extract-section --name Usage --path README.md
@@ -26,7 +27,7 @@ Current implementation:
 - Python structural parsing via tree-sitter.
 - C-family semantic symbols/references via clangd LSP when available.
 - C-family structural fallback via tree-sitter and lexical scanning.
-- CMake variables, command blocks, targets, and references via lexical scanning.
+- CMake variables, command blocks, narrowed block selection, targets, and references via lexical scanning.
 - Markdown headings and sections via tree-sitter.
 - Codex skill packaging in `skill/SKILL.md`.
 

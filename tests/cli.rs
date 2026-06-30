@@ -100,15 +100,19 @@ if(ENABLE_ACCELERATOR)
     add_library(sample_core STATIC core.cpp)
     target_link_libraries(sample_core PRIVATE dependency)
     list(APPEND SAMPLE_TARGETS sample_core)
+    foreach(item IN LISTS SAMPLE_OPS)
+        list(APPEND SAMPLE_TARGETS "${item}")
+    endforeach()
 endif()
 
-    foreach(item IN LISTS SAMPLE_OPS)
+foreach(item IN LISTS SAMPLE_OPS)
     set(sample_generated_target "sample_generated_${item}")
     add_library(${sample_generated_target} STATIC generated.cpp)
     target_include_directories(${sample_generated_target} PRIVATE include)
     set_target_properties(${sample_generated_target} PROPERTIES OUTPUT_NAME generated)
     add_custom_command(TARGET ${sample_generated_target} POST_BUILD COMMAND echo done)
     add_executable(sample_tool ${item}.cpp)
+    target_link_libraries(sample_tool PRIVATE $<TARGET_LINKER_FILE:sample_core>)
 endforeach()
 "#
         .trim_start(),
@@ -300,6 +304,45 @@ fn cmake_variables_blocks_targets_and_references_can_be_extracted() {
     Command::cargo_bin("codescope")
         .unwrap()
         .args([
+            "extract-block",
+            "--name",
+            "ENABLE_ACCELERATOR",
+            "--contains",
+            "SAMPLE_TARGETS",
+            "--smallest",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "foreach(item IN LISTS SAMPLE_OPS)",
+        ))
+        .stdout(predicate::str::contains("if(ENABLE_ACCELERATOR)").not());
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-block",
+            "--name",
+            "ENABLE_ACCELERATOR",
+            "--around-line",
+            "17",
+            "--largest",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("if(ENABLE_ACCELERATOR)"));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
             "extract-symbol",
             "--kind",
             "target",
@@ -315,6 +358,9 @@ fn cmake_variables_blocks_targets_and_references_can_be_extracted() {
         .stdout(predicate::str::contains("add_library(sample_core"))
         .stdout(predicate::str::contains(
             "target_link_libraries(sample_core",
+        ))
+        .stdout(predicate::str::contains(
+            "$<TARGET_LINKER_FILE:sample_core>",
         ));
 
     Command::cargo_bin("codescope")

@@ -31,7 +31,7 @@ enum Command {
     ListHeadings(QueryArgs),
     ExtractFunction(NamedArgs),
     ExtractSection(NamedArgs),
-    ExtractBlock(NamedArgs),
+    ExtractBlock(BlockArgs),
     ExtractSymbol(SymbolArgs),
     ExtractVariable(VariableArgs),
     References(NamedArgs),
@@ -71,6 +71,29 @@ struct NamedArgs {
     common: CommonArgs,
     #[arg(long)]
     name: String,
+}
+
+#[derive(Args, Clone, Debug)]
+#[group(multiple = false)]
+struct BlockSelectionArgs {
+    #[arg(long)]
+    largest: bool,
+    #[arg(long)]
+    smallest: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct BlockArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    name: String,
+    #[arg(long)]
+    around_line: Option<usize>,
+    #[arg(long)]
+    contains: Option<String>,
+    #[command(flatten)]
+    selection: BlockSelectionArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -185,11 +208,42 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
             Ok((symbols, args.common.json, true))
         }
         Command::ExtractBlock(args) => {
-            let mut symbols = collect_symbols(
-                &args.common,
+            let mut broad_common = args.common.clone();
+            broad_common.max_matches = usize::MAX;
+            let named_blocks = collect_symbols(
+                &broad_common,
                 Some(SymbolKindFilter::Block),
                 Some(&args.name),
             )?;
+            let mut symbols = if args.contains.is_some() || args.around_line.is_some() {
+                collect_symbols(&broad_common, Some(SymbolKindFilter::Block), None)?
+                    .into_iter()
+                    .filter(|candidate| {
+                        named_blocks.iter().any(|parent| {
+                            parent.path == candidate.path
+                                && parent.start_line <= candidate.start_line
+                                && candidate.end_line <= parent.end_line
+                        })
+                    })
+                    .collect()
+            } else {
+                named_blocks
+            };
+            if let Some(needle) = args.contains {
+                symbols.retain(|symbol| symbol.source.contains(&needle));
+            }
+            if let Some(line) = args.around_line {
+                symbols.retain(|symbol| symbol.start_line <= line && line <= symbol.end_line);
+            }
+            if args.selection.largest {
+                symbols.sort_by_key(|symbol| {
+                    std::cmp::Reverse(symbol.end_line.saturating_sub(symbol.start_line))
+                });
+                symbols.truncate(1);
+            } else if args.selection.smallest {
+                symbols.sort_by_key(|symbol| symbol.end_line.saturating_sub(symbol.start_line));
+                symbols.truncate(1);
+            }
             symbols.truncate(args.common.max_matches);
             Ok((symbols, args.common.json, true))
         }

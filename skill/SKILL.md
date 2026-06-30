@@ -22,6 +22,7 @@ codescope extract-symbol --name Widget --kind class --path src
 codescope extract-variable --name DEFAULT_LIMIT --path src
 codescope extract-variable --name MY_LIST --lang cmake --path CMakeLists.txt
 codescope extract-block --name ENABLE_FEATURE --lang cmake --path CMakeLists.txt
+codescope extract-block --name ENABLE_FEATURE --contains generated_target --smallest --lang cmake --path CMakeLists.txt
 codescope extract-symbol --name my_target --kind target --lang cmake --path CMakeLists.txt
 codescope list-headings --path docs --query install
 codescope extract-section --name Usage.Installation --path README.md
@@ -42,7 +43,8 @@ codescope context --name parse_config --path src
 - CMake extraction covers `CMakeLists.txt` and `*.cmake` files with `--lang cmake`.
 - CMake variables include full `set(...)`, `option(...)`, `unset(...)`, and mutating `list(...)` commands.
 - CMake blocks include matched `if`, `foreach`, `function`, `macro`, and `while` regions; `extract-block --name NAME` may match the command name, full header, or an argument token.
-- CMake targets include `add_library(...)`, `add_executable(...)`, and `pybind11_add_module(...)` definitions plus related `target_*`, `add_dependencies(...)`, `set_property(...)`, and `install(TARGETS ...)` commands.
+- CMake block extraction supports `--contains TEXT`, `--around-line N`, `--largest`, and `--smallest` to narrow broad condition matches to the relevant nested region.
+- CMake targets include `add_library(...)`, `add_executable(...)`, and `pybind11_add_module(...)` definitions plus related `target_*`, `add_dependencies(...)`, `set_property(...)`, `install(TARGETS ...)`, and `$<TARGET_...:name>` generator-expression references.
 - CMake references find bare names and `${NAME}` references.
 - Markdown heading discovery uses tree-sitter and ignores fenced-code headings.
 - Markdown headings have nested qualified names like `Usage.Installation`; `extract-section` returns the heading and content until the next heading at the same or higher level.
@@ -56,7 +58,7 @@ codescope context --name parse_config --path src
 3. Use `codescope extract-symbol` for classes, structs, enums, and mixed symbol lookup.
 4. Use `codescope extract-variable` for constants, globals, fields, and Python assignments; add `--scope` for class/function-scoped variables.
 5. Use `codescope extract-variable --lang cmake` for focused CMake list or option definitions.
-6. Use `codescope extract-block --lang cmake` for CMake condition or loop regions.
+6. Use `codescope extract-block --lang cmake` for CMake condition or loop regions; add `--contains`, `--around-line`, `--largest`, or `--smallest` when a broad condition has many nested blocks.
 7. Use `codescope extract-symbol --kind target --lang cmake` for CMake target setup.
 8. Use `codescope list-headings` when the exact Markdown heading is unknown or fuzzy.
 9. Use `codescope extract-section` for focused Markdown documentation context.

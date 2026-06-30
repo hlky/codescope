@@ -196,30 +196,34 @@ fn command_mentions_target(command: &CmakeCommand, target: &str) -> bool {
     if command.args.is_empty() {
         return false;
     }
-    if is_target_definition(&command.name)
+    if (is_target_definition(&command.name)
         || command.name.starts_with("target_")
-        || command.name == "set_target_properties"
+        || command.name == "set_target_properties")
+        && cmake_name_matches(&command.args[0], target)
     {
-        return cmake_name_matches(&command.args[0], target);
+        return true;
     }
     if command.name == "add_custom_command"
         && command
             .args
             .first()
             .is_some_and(|arg| arg.eq_ignore_ascii_case("TARGET"))
-    {
-        return command
+        && command
             .args
             .get(1)
-            .is_some_and(|arg| cmake_name_matches(arg, target));
+            .is_some_and(|arg| cmake_name_matches(arg, target))
+    {
+        return true;
     }
-    if matches!(command.name.as_str(), "add_dependencies" | "set_property") {
-        return command
+    if matches!(command.name.as_str(), "add_dependencies" | "set_property")
+        && command
             .args
             .iter()
-            .any(|arg| cmake_name_matches(arg, target));
+            .any(|arg| cmake_name_matches(arg, target))
+    {
+        return true;
     }
-    command.name == "install"
+    (command.name == "install"
         && command
             .args
             .iter()
@@ -227,7 +231,8 @@ fn command_mentions_target(command: &CmakeCommand, target: &str) -> bool {
         && command
             .args
             .iter()
-            .any(|arg| cmake_name_matches(arg, target))
+            .any(|arg| cmake_name_matches(arg, target)))
+        || command_has_generator_target_reference(command, target)
 }
 
 fn variable_name(command: &CmakeCommand) -> Option<String> {
@@ -304,6 +309,15 @@ fn normalize_cmake_name(value: &str) -> String {
         value = &value[2..value.len() - 1];
     }
     value.trim().to_string()
+}
+
+fn command_has_generator_target_reference(command: &CmakeCommand, target: &str) -> bool {
+    let normalized = regex::escape(&normalize_cmake_name(target));
+    let pattern = Regex::new(&format!(
+        r"\$<TARGET_[A-Za-z0-9_]+:\s*(?:\$\{{\s*{normalized}\s*\}}|{normalized})\s*>"
+    ))
+    .ok();
+    pattern.is_some_and(|pattern| pattern.is_match(&command.raw_args))
 }
 
 fn parse_commands(text: &str) -> Vec<CmakeCommand> {
