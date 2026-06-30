@@ -224,6 +224,6 @@ Navigation records from `definition`, `type-of`, and `hover` include line and co
 }
 ```
 
-`context-pack --json` emits a pack with `subject`, `budget`, ranked `items`, whole-item `omitted` entries, and `notes`. Each item includes `role`, `path`, `start_line`, `end_line`, `language`, `backend`, `score`, `reason`, and `source`.
+`context-pack --json` emits a pack with `subject`, `budget`, ranked `items`, whole-item `omitted` entries, and `notes`. Each item includes `role`, `path`, `start_line`, `end_line`, `language`, `backend`, `score`, `reason`, and `source`. Symbol/search-style query commands accept one or more `--path` roots, for example `context-pack --path src tests`. Project traversal honors Git ignore files and skips common generated, vendored, and agent metadata roots such as `.codex`, `.agents`, `third_party`, `vendor`, `external`, and `_deps`.
 
 `workspace-map --json` emits a compact project map with `root`, language file counts, source roots, build systems, CMake targets, test roots, doc roots, tool availability, Git status, ignored patterns, and notes. Use `--max-targets N` to cap target output for large CMake projects.

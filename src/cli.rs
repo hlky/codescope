@@ -67,8 +67,8 @@ enum Command {
 
 #[derive(Args, Clone, Debug)]
 struct CommonArgs {
-    #[arg(long, default_value = ".")]
-    path: PathBuf,
+    #[arg(long, default_value = ".", num_args = 1..)]
+    path: Vec<PathBuf>,
     #[arg(long)]
     root: Option<PathBuf>,
     #[arg(long, value_enum)]
@@ -983,6 +983,95 @@ fn run_workspace_map(args: WorkspaceMapArgs) -> Result<RunOutput, AppError> {
     })
 }
 
+fn common_roots(common: &CommonArgs) -> Result<Vec<PathBuf>, AppError> {
+    common
+        .path
+        .iter()
+        .map(|path| {
+            path.canonicalize()
+                .with_context(|| format!("failed to resolve --path {}", path.display()))
+                .map_err(AppError::Config)
+        })
+        .collect()
+}
+
+fn single_common_root(common: &CommonArgs) -> Result<PathBuf, AppError> {
+    if common.path.len() != 1 {
+        return Err(AppError::Config(anyhow::anyhow!(
+            "this command requires exactly one --path root"
+        )));
+    }
+    common.path[0]
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path[0].display()))
+        .map_err(AppError::Config)
+}
+
+fn resolve_common_file(common: &CommonArgs, file: &PathBuf) -> Result<PathBuf, AppError> {
+    if file.is_absolute() {
+        return file
+            .canonicalize()
+            .with_context(|| format!("failed to resolve --file {}", file.display()))
+            .map_err(AppError::Config);
+    }
+    let roots = common_roots(common)?;
+    let mut candidates = roots
+        .iter()
+        .map(|root| {
+            if root.is_file() {
+                root.parent()
+                    .map(|parent| parent.join(file))
+                    .unwrap_or_else(|| file.clone())
+            } else {
+                root.join(file)
+            }
+        })
+        .filter(|candidate| candidate.exists())
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+    match candidates.as_slice() {
+        [candidate] => candidate
+            .canonicalize()
+            .with_context(|| format!("failed to resolve --file {}", file.display()))
+            .map_err(AppError::Config),
+        [] if roots.len() == 1 => {
+            let root = &roots[0];
+            let candidate = if root.is_file() {
+                root.parent()
+                    .map(|parent| parent.join(file))
+                    .unwrap_or_else(|| file.clone())
+            } else {
+                root.join(file)
+            };
+            candidate
+                .canonicalize()
+                .with_context(|| format!("failed to resolve --file {}", file.display()))
+                .map_err(AppError::Config)
+        }
+        [] => Err(AppError::Config(anyhow::anyhow!(
+            "failed to resolve --file {} under any --path root",
+            file.display()
+        ))),
+        _ => Err(AppError::Config(anyhow::anyhow!(
+            "--file {} matched multiple --path roots",
+            file.display()
+        ))),
+    }
+}
+
+fn common_source_files_by_root(
+    common: &CommonArgs,
+) -> Result<Vec<(PathBuf, Vec<PathBuf>)>, AppError> {
+    Ok(common_roots(common)?
+        .into_iter()
+        .map(|root| {
+            let files = source_files(&root, common.lang);
+            (root, files)
+        })
+        .collect())
+}
+
 fn run_context_pack(args: ContextPackArgs) -> Result<RunOutput, AppError> {
     let subject = context_pack_subject(&args)?;
     let mut pack = ContextPack::new(subject.clone(), args.budget);
@@ -1034,7 +1123,7 @@ fn run_context_pack(args: ContextPackArgs) -> Result<RunOutput, AppError> {
 
 fn run_tests_for(args: TestsForArgs) -> Result<RunOutput, AppError> {
     let records = crate::related_tests::collect(&crate::related_tests::RelatedTestOptions {
-        path: args.common.path,
+        path: single_common_root(&args.common)?,
         lang: args.common.lang,
         name: args.name,
         file: args.file,
@@ -1049,7 +1138,7 @@ fn run_tests_for(args: TestsForArgs) -> Result<RunOutput, AppError> {
 
 fn run_related(args: RelatedArgs) -> Result<RunOutput, AppError> {
     let records = crate::related::collect(&crate::related::RelatedOptions {
-        path: args.common.path,
+        path: single_common_root(&args.common)?,
         lang: args.common.lang,
         name: args.name,
         file: args.file,
@@ -1174,25 +1263,9 @@ fn collect_file_symbols(
     let Some(file) = file else {
         return Ok(Vec::new());
     };
-    let base = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
-    let file = if file.is_absolute() {
-        file.clone()
-    } else if base.is_file() {
-        base.parent()
-            .map(|parent| parent.join(file))
-            .unwrap_or_else(|| file.clone())
-    } else {
-        base.join(file)
-    }
-    .canonicalize()
-    .with_context(|| format!("failed to resolve --file {}", file.display()))
-    .map_err(AppError::Config)?;
+    let file = resolve_common_file(common, file)?;
     let mut file_common = common.clone();
-    file_common.path = file;
+    file_common.path = vec![file];
     file_common.max_matches = usize::MAX;
     collect_symbols(&file_common, None, None)
 }
@@ -1238,13 +1311,16 @@ fn collect_impact_for_name(
         .callees
         .extend(collect_callees_from_primary(common, primary, name));
 
-    if let Ok(tests) = crate::related_tests::collect(&crate::related_tests::RelatedTestOptions {
-        path: common.path.clone(),
-        lang: common.lang,
-        name: Some(name.to_string()),
-        file: None,
-        max_matches: common.max_matches,
-    }) {
+    if let Ok(path) = single_common_root(common)
+        && let Ok(tests) =
+            crate::related_tests::collect(&crate::related_tests::RelatedTestOptions {
+                path,
+                lang: common.lang,
+                name: Some(name.to_string()),
+                file: None,
+                max_matches: common.max_matches,
+            })
+    {
         report
             .tests
             .extend(tests.into_iter().map(ImpactEntry::from_test));
@@ -1262,7 +1338,7 @@ fn collect_impact_for_file(
 ) -> Result<(), AppError> {
     let subject_file = resolve_subject_file(common, file).ok();
     if let Ok(tests) = crate::related_tests::collect(&crate::related_tests::RelatedTestOptions {
-        path: common.path.clone(),
+        path: single_common_root(common)?,
         lang: common.lang,
         name: None,
         file: Some(file.clone()),
@@ -1284,54 +1360,40 @@ fn collect_impact_for_file(
 }
 
 fn resolve_subject_file(common: &CommonArgs, file: &PathBuf) -> Result<PathBuf, AppError> {
-    let base = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
-    let path = if file.is_absolute() {
-        file.clone()
-    } else if base.is_file() {
-        base.parent()
-            .map(|parent| parent.join(file))
-            .unwrap_or_else(|| file.clone())
-    } else {
-        base.join(file)
-    };
-    path.canonicalize()
-        .with_context(|| format!("failed to resolve --file {}", file.display()))
-        .map_err(AppError::Config)
+    resolve_common_file(common, file)
 }
 
 fn collect_impact_docs(report: &mut ImpactReport, common: &CommonArgs, name: &str) {
-    let Ok(root) = common.path.canonicalize() else {
+    let needle = short_impact_name(name).to_ascii_lowercase();
+    let Ok(roots) = common_roots(common) else {
         return;
     };
-    let needle = short_impact_name(name).to_ascii_lowercase();
-    for file in source_files(&root, Some(crate::model::LanguageFilter::Markdown)) {
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        if !text.to_ascii_lowercase().contains(&needle) {
-            continue;
-        }
-        let line = first_matching_line(&text, &needle).unwrap_or(1);
-        let start = line.saturating_sub(3).max(1);
-        let end = line + 8;
-        report.docs.push(ImpactEntry::synthetic(
-            file,
-            start,
-            end,
-            Language::Markdown,
-            "lexical",
-            "doc",
-            name,
-            name,
-            "Markdown mention of subject",
-            line_slice(&text, start, end),
-        ));
-        if report.docs.len() >= common.max_matches {
-            break;
+    for root in roots {
+        for file in source_files(&root, Some(crate::model::LanguageFilter::Markdown)) {
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            if !text.to_ascii_lowercase().contains(&needle) {
+                continue;
+            }
+            let line = first_matching_line(&text, &needle).unwrap_or(1);
+            let start = line.saturating_sub(3).max(1);
+            let end = line + 8;
+            report.docs.push(ImpactEntry::synthetic(
+                file,
+                start,
+                end,
+                Language::Markdown,
+                "lexical",
+                "doc",
+                name,
+                name,
+                "Markdown mention of subject",
+                line_slice(&text, start, end),
+            ));
+            if report.docs.len() >= common.max_matches {
+                return;
+            }
         }
     }
 }
@@ -1362,23 +1424,8 @@ fn collect_impact_build_for_file(
     common: &CommonArgs,
     file: &PathBuf,
 ) -> Result<(), AppError> {
-    let root = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
-    let resolved = if file.is_absolute() {
-        file.clone()
-    } else if root.is_file() {
-        root.parent()
-            .map(|parent| parent.join(file))
-            .unwrap_or_else(|| file.clone())
-    } else {
-        root.join(file)
-    }
-    .canonicalize()
-    .with_context(|| format!("failed to resolve --file {}", file.display()))
-    .map_err(AppError::Config)?;
+    let root = single_common_root(common)?;
+    let resolved = resolve_common_file(common, file)?;
     let file_name = resolved
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -1651,73 +1698,73 @@ fn collect_navigation_by_name(
     request: NavigationRequest,
     name: &str,
 ) -> Result<Vec<NavigationRecord>, AppError> {
-    let path = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
     let mut out = Vec::new();
-    let mut c_family = Vec::new();
-    for file in source_files(&path, common.lang) {
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        match language_for_path(&file) {
-            Some(Language::Python) => {
-                out.extend(python_navigation_records(
-                    &file,
-                    &text,
-                    request,
-                    name,
-                    common.max_matches - out.len(),
-                ));
+    for path in common_roots(common)? {
+        let mut c_family = Vec::new();
+        for file in source_files(&path, common.lang) {
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            match language_for_path(&file) {
+                Some(Language::Python) => {
+                    out.extend(python_navigation_records(
+                        &file,
+                        &text,
+                        request,
+                        name,
+                        common.max_matches - out.len(),
+                    ));
+                }
+                Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
+                    c_family.push((file, text));
+                }
+                _ => {}
             }
-            Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-                c_family.push((file, text));
+            if out.len() >= common.max_matches {
+                return Ok(out);
             }
-            _ => {}
         }
-        if out.len() >= common.max_matches {
-            return Ok(out);
-        }
-    }
 
-    if !c_family.is_empty() && out.len() < common.max_matches {
-        let options = clangd_options(common, &path)?;
-        if common.backend == Backend::Lsp {
-            out.extend(
-                crate::lsp::navigate_name(
+        if !c_family.is_empty() && out.len() < common.max_matches {
+            let options = clangd_options(common, &path)?;
+            if common.backend == Backend::Lsp {
+                out.extend(
+                    crate::lsp::navigate_name(
+                        &c_family,
+                        &options,
+                        request,
+                        name,
+                        common.max_matches - out.len(),
+                    )
+                    .map_err(AppError::Backend)?,
+                );
+            } else if common.backend == Backend::Auto
+                && crate::lsp::clangd_available()
+                && let Ok(records) = crate::lsp::navigate_name(
                     &c_family,
                     &options,
                     request,
                     name,
                     common.max_matches - out.len(),
                 )
-                .map_err(AppError::Backend)?,
-            );
-        } else if common.backend == Backend::Auto
-            && crate::lsp::clangd_available()
-            && let Ok(records) = crate::lsp::navigate_name(
-                &c_family,
-                &options,
-                request,
-                name,
-                common.max_matches - out.len(),
-            )
-        {
-            out.extend(records);
-        } else if request == NavigationRequest::Definition {
-            for (file, text) in &c_family {
-                out.extend(
-                    crate::cfamily::symbols(file, text, Backend::TreeSitter, None, Some(name))
-                        .map_err(AppError::Backend)?
-                        .into_iter()
-                        .map(|symbol| NavigationRecord::from_symbol(symbol, 1, 1)),
-                );
-                if out.len() >= common.max_matches {
-                    break;
+            {
+                out.extend(records);
+            } else if request == NavigationRequest::Definition {
+                for (file, text) in &c_family {
+                    out.extend(
+                        crate::cfamily::symbols(file, text, Backend::TreeSitter, None, Some(name))
+                            .map_err(AppError::Backend)?
+                            .into_iter()
+                            .map(|symbol| NavigationRecord::from_symbol(symbol, 1, 1)),
+                    );
+                    if out.len() >= common.max_matches {
+                        break;
+                    }
                 }
             }
+        }
+        if out.len() >= common.max_matches {
+            break;
         }
     }
     Ok(out)
@@ -1730,23 +1777,7 @@ fn collect_navigation_by_position(
     line: usize,
     column: usize,
 ) -> Result<Vec<NavigationRecord>, AppError> {
-    let base = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
-    let path = if file.is_absolute() {
-        file.clone()
-    } else if base.is_file() {
-        base.parent()
-            .map(|parent| parent.join(file))
-            .unwrap_or_else(|| file.clone())
-    } else {
-        base.join(file)
-    }
-    .canonicalize()
-    .with_context(|| format!("failed to resolve --file {}", file.display()))
-    .map_err(AppError::Config)?;
+    let path = resolve_common_file(common, file)?;
     let text = read_text(&path).ok_or_else(|| {
         AppError::Config(anyhow::anyhow!("failed to read --file {}", path.display()))
     })?;
@@ -1764,7 +1795,15 @@ fn collect_navigation_by_position(
             ))
         }
         Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-            let options = clangd_options(common, &base)?;
+            let search_root = common_roots(common)?
+                .into_iter()
+                .find(|root| path.starts_with(root))
+                .unwrap_or_else(|| {
+                    path.parent()
+                        .map(std::path::Path::to_path_buf)
+                        .unwrap_or_else(|| path.clone())
+                });
+            let options = clangd_options(common, &search_root)?;
             crate::lsp::navigate_position(&path, &text, &options, request, line, column)
                 .map_err(AppError::Backend)
         }
@@ -1897,21 +1936,9 @@ fn collect_enclosing_symbols(
     let Some(line) = around_line else {
         return Ok(Vec::new());
     };
-    let base = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
-    let file = if file.is_absolute() {
-        file.clone()
-    } else {
-        base.join(file)
-    }
-    .canonicalize()
-    .with_context(|| format!("failed to resolve --file {}", file.display()))
-    .map_err(AppError::Config)?;
+    let file = resolve_common_file(common, file)?;
     let mut file_common = common.clone();
-    file_common.path = file;
+    file_common.path = vec![file];
     file_common.max_matches = usize::MAX;
     let mut symbols = collect_symbols(&file_common, None, None)?;
     symbols.retain(|symbol| symbol.start_line <= line && line <= symbol.end_line);
@@ -2004,7 +2031,7 @@ fn collect_related_tests(
     let Some(name) = name else {
         return;
     };
-    let Ok(root) = common.path.canonicalize() else {
+    let Ok(roots) = common_roots(common) else {
         return;
     };
     let needle = name
@@ -2013,35 +2040,37 @@ fn collect_related_tests(
         .next()
         .unwrap_or(name)
         .to_ascii_lowercase();
-    for file in source_files(&root, common.lang) {
-        if !is_test_path(&file) {
-            continue;
+    for root in roots {
+        for file in source_files(&root, common.lang) {
+            if !is_test_path(&file) {
+                continue;
+            }
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            if !text.to_ascii_lowercase().contains(&needle) {
+                continue;
+            }
+            let line = first_matching_line(&text, &needle).unwrap_or(1);
+            let start = line.saturating_sub(3).max(1);
+            let end = line + 6;
+            let language = language_for_path(&file).unwrap_or(Language::Text);
+            pack.push(ContextPackItem::synthetic(
+                "test",
+                file,
+                start,
+                end,
+                language,
+                "lexical",
+                if primary.iter().any(|symbol| symbol.language == language) {
+                    650
+                } else {
+                    600
+                },
+                "nearby test mention",
+                line_slice(&text, start, end),
+            ));
         }
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        if !text.to_ascii_lowercase().contains(&needle) {
-            continue;
-        }
-        let line = first_matching_line(&text, &needle).unwrap_or(1);
-        let start = line.saturating_sub(3).max(1);
-        let end = line + 6;
-        let language = language_for_path(&file).unwrap_or(Language::Text);
-        pack.push(ContextPackItem::synthetic(
-            "test",
-            file,
-            start,
-            end,
-            language,
-            "lexical",
-            if primary.iter().any(|symbol| symbol.language == language) {
-                650
-            } else {
-                600
-            },
-            "nearby test mention",
-            line_slice(&text, start, end),
-        ));
     }
 }
 
@@ -2049,7 +2078,7 @@ fn collect_related_docs(pack: &mut ContextPack, common: &CommonArgs, name: Optio
     let Some(name) = name else {
         return;
     };
-    let Ok(root) = common.path.canonicalize() else {
+    let Ok(roots) = common_roots(common) else {
         return;
     };
     let needle = name
@@ -2058,27 +2087,29 @@ fn collect_related_docs(pack: &mut ContextPack, common: &CommonArgs, name: Optio
         .next()
         .unwrap_or(name)
         .to_ascii_lowercase();
-    for file in source_files(&root, Some(crate::model::LanguageFilter::Markdown)) {
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        if !text.to_ascii_lowercase().contains(&needle) {
-            continue;
+    for root in roots {
+        for file in source_files(&root, Some(crate::model::LanguageFilter::Markdown)) {
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            if !text.to_ascii_lowercase().contains(&needle) {
+                continue;
+            }
+            let line = first_matching_line(&text, &needle).unwrap_or(1);
+            let start = line.saturating_sub(3).max(1);
+            let end = line + 8;
+            pack.push(ContextPackItem::synthetic(
+                "docs",
+                file,
+                start,
+                end,
+                Language::Markdown,
+                "lexical",
+                500,
+                "documentation mention",
+                line_slice(&text, start, end),
+            ));
         }
-        let line = first_matching_line(&text, &needle).unwrap_or(1);
-        let start = line.saturating_sub(3).max(1);
-        let end = line + 8;
-        pack.push(ContextPackItem::synthetic(
-            "docs",
-            file,
-            start,
-            end,
-            Language::Markdown,
-            "lexical",
-            500,
-            "documentation mention",
-            line_slice(&text, start, end),
-        ));
     }
 }
 
@@ -2088,8 +2119,16 @@ fn collect_related_diagnostics(
     name: Option<&str>,
     primary: &[Symbol],
 ) {
+    let path = match single_common_root(common) {
+        Ok(path) => path,
+        Err(_) => {
+            pack.notes
+                .push("diagnostic collection skipped for multiple --path roots".to_string());
+            return;
+        }
+    };
     let run = match crate::diagnostics::collect(&DiagnosticOptions {
-        path: common.path.clone(),
+        path,
         file: None,
         root: common.root.clone(),
         lang: common.lang,
@@ -2236,7 +2275,7 @@ fn run_symbol_replacement(
     crate::replace::validate_symbol_request(from, to, kind).map_err(AppError::Config)?;
     if let Some(kind) = kind {
         let query = CommonArgs {
-            path: common.path.clone(),
+            path: vec![common.path.clone()],
             root: None,
             lang: common.lang,
             backend: Backend::Auto,
@@ -2339,51 +2378,51 @@ fn collect_symbols(
     kind: Option<SymbolKindFilter>,
     wanted: Option<&str>,
 ) -> Result<Vec<Symbol>, AppError> {
-    let path = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
     let mut out = Vec::new();
-    let mut c_family = Vec::new();
-    for file in source_files(&path, common.lang) {
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        match language_for_path(&file) {
-            Some(Language::Python) => {
-                out.extend(crate::python::symbols(&file, &text, kind, wanted))
+    for (path, files) in common_source_files_by_root(common)? {
+        let mut c_family = Vec::new();
+        for file in files {
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            match language_for_path(&file) {
+                Some(Language::Python) => {
+                    out.extend(crate::python::symbols(&file, &text, kind, wanted))
+                }
+                Some(Language::Cmake) => {
+                    out.extend(crate::cmake::symbols(&file, &text, kind, wanted));
+                }
+                Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
+                    c_family.push((file, text));
+                }
+                Some(Language::Markdown)
+                    if kind.is_none()
+                        || matches!(
+                            kind,
+                            Some(SymbolKindFilter::All | SymbolKindFilter::Heading)
+                        ) =>
+                {
+                    out.extend(crate::markdown::headings(&file, &text, wanted));
+                }
+                _ => {}
             }
-            Some(Language::Cmake) => {
-                out.extend(crate::cmake::symbols(&file, &text, kind, wanted));
+            if out.len() >= common.max_matches {
+                return Ok(out);
             }
-            Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-                c_family.push((file, text));
-            }
-            Some(Language::Markdown)
-                if kind.is_none()
-                    || matches!(
-                        kind,
-                        Some(SymbolKindFilter::All | SymbolKindFilter::Heading)
-                    ) =>
-            {
-                out.extend(crate::markdown::headings(&file, &text, wanted));
-            }
-            _ => {}
+        }
+        if !c_family.is_empty() && out.len() < common.max_matches {
+            out.extend(collect_c_family_symbols(
+                common,
+                &path,
+                &c_family,
+                kind,
+                wanted,
+                common.max_matches - out.len(),
+            )?);
         }
         if out.len() >= common.max_matches {
             break;
         }
-    }
-    if !c_family.is_empty() && out.len() < common.max_matches {
-        out.extend(collect_c_family_symbols(
-            common,
-            &path,
-            &c_family,
-            kind,
-            wanted,
-            common.max_matches - out.len(),
-        )?);
     }
     Ok(out)
 }
@@ -2392,108 +2431,105 @@ fn collect_markdown_headings(
     common: &CommonArgs,
     wanted: Option<&str>,
 ) -> Result<Vec<Symbol>, AppError> {
-    let path = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
     let mut out = Vec::new();
-    for file in source_files(&path, common.lang) {
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        if language_for_path(&file) == Some(Language::Markdown) {
-            out.extend(crate::markdown::headings(&file, &text, wanted));
-        }
-        if out.len() >= common.max_matches {
-            break;
+    for (_, files) in common_source_files_by_root(common)? {
+        for file in files {
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            if language_for_path(&file) == Some(Language::Markdown) {
+                out.extend(crate::markdown::headings(&file, &text, wanted));
+            }
+            if out.len() >= common.max_matches {
+                return Ok(out);
+            }
         }
     }
     Ok(out)
 }
 
 fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, AppError> {
-    let path = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
     let mut out = Vec::new();
-    let mut c_family = Vec::new();
-    for file in source_files(&path, common.lang) {
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        match language_for_path(&file) {
-            Some(Language::Python) => out.extend(crate::python::references(
-                &file,
-                &text,
-                wanted,
-                common.max_matches - out.len(),
-            )),
-            Some(Language::Cmake) => out.extend(crate::cmake::references(
-                &file,
-                &text,
-                wanted,
-                common.max_matches - out.len(),
-            )),
-            Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-                c_family.push((file, text));
+    for (path, files) in common_source_files_by_root(common)? {
+        let mut c_family = Vec::new();
+        for file in files {
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            match language_for_path(&file) {
+                Some(Language::Python) => out.extend(crate::python::references(
+                    &file,
+                    &text,
+                    wanted,
+                    common.max_matches - out.len(),
+                )),
+                Some(Language::Cmake) => out.extend(crate::cmake::references(
+                    &file,
+                    &text,
+                    wanted,
+                    common.max_matches - out.len(),
+                )),
+                Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
+                    c_family.push((file, text));
+                }
+                _ => {}
             }
-            _ => {}
+            if out.len() >= common.max_matches {
+                return Ok(out);
+            }
+        }
+        if !c_family.is_empty() && out.len() < common.max_matches {
+            out.extend(collect_c_family_references(
+                common,
+                &path,
+                &c_family,
+                wanted,
+                common.max_matches - out.len(),
+            )?);
         }
         if out.len() >= common.max_matches {
             break;
         }
-    }
-    if !c_family.is_empty() && out.len() < common.max_matches {
-        out.extend(collect_c_family_references(
-            common,
-            &path,
-            &c_family,
-            wanted,
-            common.max_matches - out.len(),
-        )?);
     }
     Ok(out)
 }
 
 fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, AppError> {
-    let path = common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
-        .map_err(AppError::Config)?;
     let mut out = Vec::new();
-    let mut c_family = Vec::new();
-    for file in source_files(&path, common.lang) {
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        match language_for_path(&file) {
-            Some(Language::Python) => out.extend(crate::python::callers(
-                &file,
-                &text,
+    for (path, files) in common_source_files_by_root(common)? {
+        let mut c_family = Vec::new();
+        for file in files {
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            match language_for_path(&file) {
+                Some(Language::Python) => out.extend(crate::python::callers(
+                    &file,
+                    &text,
+                    wanted,
+                    common.max_matches - out.len(),
+                )),
+                Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
+                    c_family.push((file, text));
+                }
+                _ => {}
+            }
+            if out.len() >= common.max_matches {
+                return Ok(out);
+            }
+        }
+        if !c_family.is_empty() && out.len() < common.max_matches {
+            out.extend(collect_c_family_callers(
+                common,
+                &path,
+                &c_family,
                 wanted,
                 common.max_matches - out.len(),
-            )),
-            Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
-                c_family.push((file, text));
-            }
-            _ => {}
+            )?);
         }
         if out.len() >= common.max_matches {
             break;
         }
-    }
-    if !c_family.is_empty() && out.len() < common.max_matches {
-        out.extend(collect_c_family_callers(
-            common,
-            &path,
-            &c_family,
-            wanted,
-            common.max_matches - out.len(),
-        )?);
     }
     Ok(out)
 }
@@ -2614,48 +2650,44 @@ fn graph_subject_nodes(common: &CommonArgs, name: &str) -> Result<Vec<Symbol>, A
 }
 
 fn run_dataflow(args: NamedArgs) -> Result<RunOutput, AppError> {
-    let path = args
-        .common
-        .path
-        .canonicalize()
-        .with_context(|| format!("failed to resolve --path {}", args.common.path.display()))
-        .map_err(AppError::Config)?;
     let mut graph = crate::graph::Graph::new();
     let mut scanned = 0usize;
-    for file in source_files(&path, args.common.lang) {
-        if scanned >= args.common.max_matches {
-            break;
-        }
-        let Some(text) = read_text(&file) else {
-            continue;
-        };
-        let Some(language) = language_for_path(&file) else {
-            continue;
-        };
-        let partial = match language {
-            Language::Python => crate::graph::python_dataflow(&file, &text, &args.name),
-            Language::Cmake => crate::graph::cmake_dataflow(&file, &text, &args.name),
-            Language::C | Language::Cpp | Language::Cuda | Language::Hip => {
-                crate::graph::cfamily_dataflow(&file, &text, &args.name)
+    for root in common_roots(&args.common)? {
+        for file in source_files(&root, args.common.lang) {
+            if scanned >= args.common.max_matches {
+                break;
             }
-            _ => crate::graph::Graph::new(),
-        };
-        if partial.edges.is_empty() {
-            continue;
+            let Some(text) = read_text(&file) else {
+                continue;
+            };
+            let Some(language) = language_for_path(&file) else {
+                continue;
+            };
+            let partial = match language {
+                Language::Python => crate::graph::python_dataflow(&file, &text, &args.name),
+                Language::Cmake => crate::graph::cmake_dataflow(&file, &text, &args.name),
+                Language::C | Language::Cpp | Language::Cuda | Language::Hip => {
+                    crate::graph::cfamily_dataflow(&file, &text, &args.name)
+                }
+                _ => crate::graph::Graph::new(),
+            };
+            if partial.edges.is_empty() {
+                continue;
+            }
+            for node in partial.nodes {
+                graph.add_node(node);
+            }
+            for edge in partial.edges {
+                graph.add_edge(
+                    edge.source,
+                    edge.target,
+                    edge.kind,
+                    edge.backend,
+                    edge.confidence,
+                );
+            }
+            scanned += 1;
         }
-        for node in partial.nodes {
-            graph.add_node(node);
-        }
-        for edge in partial.edges {
-            graph.add_edge(
-                edge.source,
-                edge.target,
-                edge.kind,
-                edge.backend,
-                edge.confidence,
-            );
-        }
-        scanned += 1;
     }
     Ok(RunOutput::Graph {
         graph,

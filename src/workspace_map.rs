@@ -8,23 +8,9 @@ use serde::Serialize;
 
 use crate::model::{Language, SymbolKindFilter};
 use crate::path_display::display_path;
-use crate::workspace::{language_for_path, read_text, source_files};
-
-const IGNORED_PATTERNS: &[&str] = &[
-    ".git",
-    ".hg",
-    ".svn",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-    "venv",
-    ".venv",
-    "target",
-];
+use crate::workspace::{
+    DEFAULT_IGNORED_DIRS, is_default_ignored_dir, language_for_path, read_text, source_files,
+};
 
 const COMMON_FILES: &[(&str, &str)] = &[
     ("Cargo.toml", "cargo"),
@@ -146,7 +132,7 @@ pub fn collect(options: &WorkspaceMapOptions) -> anyhow::Result<WorkspaceMap> {
         doc_roots,
         tools: tools(),
         git: git_summary(&root, &mut notes),
-        ignored_patterns: IGNORED_PATTERNS
+        ignored_patterns: DEFAULT_IGNORED_DIRS
             .iter()
             .map(|value| value.to_string())
             .collect(),
@@ -246,15 +232,19 @@ fn language_counts(files: &[PathBuf]) -> Vec<LanguageCount> {
 }
 
 fn project_files(root: &Path) -> Vec<PathBuf> {
-    let mut builder = WalkBuilder::new(root);
+    let root = root.to_path_buf();
+    let mut builder = WalkBuilder::new(&root);
     builder
         .hidden(false)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .filter_entry(|entry| {
+        .filter_entry(move |entry| {
+            if entry.path() == root {
+                return true;
+            }
             let name = entry.file_name().to_string_lossy();
-            !IGNORED_PATTERNS.contains(&name.as_ref())
+            !is_default_ignored_dir(&name)
         });
 
     let mut files = builder

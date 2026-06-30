@@ -150,11 +150,14 @@ Plain output is grouped by impact category. JSON output includes `subject`, `def
 
 ```bash
 codescope context-pack --name Foo --path .
+codescope context-pack --name Foo --path src tests
 codescope context-pack --file src/foo.py --around-line 80 --path .
 codescope context-pack --name Foo --budget 2000 --intent fix-bug --json --path .
 ```
 
 For `--name`, the pack starts with matching definitions, then imports/includes, direct callers, references, related tests, docs, CMake build metadata, and diagnostics when available. For `--file --around-line`, the pack starts with the smallest symbol enclosing that line. `--budget` is an approximate source-character budget; lower-ranked items are omitted whole and reported under `omitted`.
+
+`--path` accepts one or more roots for symbol/search-style query commands, for example `--path src tests`. Project traversal honors Git ignore files and skips common generated, vendored, and agent metadata roots such as `.codex`, `.agents`, `target`, `node_modules`, `third_party`, `vendor`, `external`, and `_deps`.
 
 Plain output groups each ranked item by role. JSON output includes `subject`, `budget`, `items`, `omitted`, and `notes`; each item includes `role`, `path`, `start_line`, `end_line`, `language`, `backend`, `score`, `reason`, and `source`.
 

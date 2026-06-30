@@ -1743,6 +1743,51 @@ fn context_pack_json_has_stable_roles() {
 }
 
 #[test]
+fn context_pack_accepts_multiple_path_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+    std::fs::write(
+        dir.path().join("src").join("signal.py"),
+        "def stft(x):\n    return x\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("tests").join("test_signal.py"),
+        "from signal import stft\n\ndef test_stft():\n    assert stft(1) == 1\n",
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("codescope")
+        .unwrap()
+        .current_dir(dir.path())
+        .args([
+            "context-pack",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "stft",
+            "--json",
+            "--path",
+            "src",
+            "tests",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let roles = value["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["role"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(roles.contains(&"definition"));
+    assert!(roles.contains(&"caller"));
+}
+
+#[test]
 fn context_pack_file_around_line_uses_enclosing_symbol() {
     let dir = fixture();
     Command::cargo_bin("codescope")

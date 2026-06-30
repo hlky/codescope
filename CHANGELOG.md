@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.18 - 2026-06-30
+
+- Fixed project traversal to skip common vendored dependency and agent metadata roots such as `.codex`, `.agents`, `third_party`, `vendor`, `external`, and `_deps`, reducing noisy and slow `context-pack` scans on real projects.
+- Added support for multiple roots in symbol/search-style `--path` handling, including `context-pack --path src tests`.
+
 ## v0.1.17 - 2026-06-30
 
 - Added `related` for ranked next-file discovery by file or symbol, covering definitions, references, tests, docs, C-family header/implementation pairs, CMake build links, Markdown links/backlinks, JSON output, docs, skill guidance, and CLI coverage.
