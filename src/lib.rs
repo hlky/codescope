@@ -6,6 +6,7 @@ pub mod lsp;
 pub mod markdown;
 pub mod model;
 pub mod output;
+pub mod path_display;
 pub mod python;
 pub mod replace;
 pub mod workspace;

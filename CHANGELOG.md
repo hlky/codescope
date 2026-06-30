@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.6 - 2026-06-30
+
+- Normalized displayed Windows paths by removing verbatim `\\?\` prefixes and using `/` separators in plain, JSON, and edit preview output.
+
 ## v0.1.5 - 2026-06-30
 
 - Fixed `--help` and `--version` to exit successfully after printing display output.

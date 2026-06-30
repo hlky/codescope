@@ -1,4 +1,5 @@
 use crate::model::Symbol;
+use crate::path_display::display_path;
 
 pub fn json(symbols: &[Symbol]) -> anyhow::Result<String> {
     Ok(serde_json::to_string_pretty(symbols)?)
@@ -10,7 +11,7 @@ pub fn list_plain(symbols: &[Symbol]) -> String {
         .map(|symbol| {
             format!(
                 "{}:{}-{} ({}, {}, {}, {})",
-                symbol.path.display(),
+                display_path(&symbol.path),
                 symbol.start_line,
                 symbol.end_line,
                 symbol.language,
@@ -29,7 +30,7 @@ pub fn with_source(symbols: &[Symbol]) -> String {
         .map(|symbol| {
             format!(
                 "// {}:{}-{} ({}, {}, {}, {})\n{}\n",
-                symbol.path.display(),
+                display_path(&symbol.path),
                 symbol.start_line,
                 symbol.end_line,
                 symbol.language,

@@ -6,6 +6,7 @@ use anyhow::{Context, bail};
 use regex::{Captures, Regex};
 
 use crate::model::{LanguageFilter, SymbolKindFilter};
+use crate::path_display::display_path;
 use crate::workspace::{read_text, source_files};
 
 #[derive(Clone, Debug)]
@@ -134,7 +135,7 @@ pub fn render(summary: &ReplaceSummary) -> String {
     for diff in &summary.diffs {
         out.push_str(&format!(
             "\n\n# {} ({} replacements)\n{}",
-            diff.path.display(),
+            display_path(&diff.path),
             diff.replacements,
             diff.diff
         ));
@@ -329,7 +330,8 @@ fn unified_diff(path: &Path, old_text: &str, new_text: &str) -> String {
     let old_lines: Vec<&str> = old_text.lines().collect();
     let new_lines: Vec<&str> = new_text.lines().collect();
     let max = old_lines.len().max(new_lines.len());
-    let mut out = format!("--- {}\n+++ {}\n", path.display(), path.display());
+    let display = display_path(path);
+    let mut out = format!("--- {display}\n+++ {display}\n");
     for index in 0..max {
         match (old_lines.get(index), new_lines.get(index)) {
             (Some(old), Some(new)) if old == new => {}

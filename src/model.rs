@@ -113,6 +113,7 @@ impl fmt::Display for Backend {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Symbol {
+    #[serde(serialize_with = "crate::path_display::serialize")]
     pub path: PathBuf,
     pub language: Language,
     pub backend: String,
