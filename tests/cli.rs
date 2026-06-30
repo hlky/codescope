@@ -1062,6 +1062,70 @@ fn list_functions_outputs_plain_records() {
 }
 
 #[test]
+fn list_functions_lists_all_functions_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut text = String::new();
+    for idx in 1..=25 {
+        text.push_str(&format!("def f{idx}():\n    return {idx}\n\n"));
+    }
+    std::fs::write(dir.path().join("sample.py"), text).unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["list-functions", "--backend", "tree-sitter", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("f25"));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "list-functions",
+            "--backend",
+            "tree-sitter",
+            "--max-matches",
+            "20",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("f20"))
+        .stdout(predicate::str::contains("f21").not());
+}
+
+#[test]
+fn list_functions_query_scans_past_default_match_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut early = String::new();
+    for idx in 1..=25 {
+        early.push_str(&format!("def f{idx}():\n    return {idx}\n\n"));
+    }
+    std::fs::write(dir.path().join("a.py"), early).unwrap();
+    std::fs::write(
+        dir.path().join("z.py"),
+        "def target_late():\n    return 1\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "list-functions",
+            "--backend",
+            "tree-sitter",
+            "--query",
+            "target_late",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("target_late"));
+}
+
+#[test]
 fn markdown_headings_can_be_listed_and_sections_extracted() {
     let dir = fixture();
     Command::cargo_bin("codescope")
@@ -1088,6 +1152,52 @@ fn markdown_headings_can_be_listed_and_sections_extracted() {
         .success()
         .stdout(predicate::str::contains("### Details"))
         .stdout(predicate::str::contains("## API").not());
+}
+
+#[test]
+fn list_headings_lists_all_markdown_headings_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut text = String::from("# Project\n\n");
+    for idx in 1..=25 {
+        text.push_str(&format!("## {idx}. Section {idx}\nbody {idx}\n\n"));
+    }
+    std::fs::write(dir.path().join("README.md"), text).unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["list-headings", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("25. Section 25"));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["list-headings", "--max-matches", "20", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("19. Section 19"))
+        .stdout(predicate::str::contains("20. Section 20").not());
+}
+
+#[test]
+fn extract_section_accepts_numbered_markdown_heading_shorthand() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("README.md"),
+        "# Project\n\n## 14. Skip/defer list\nbody\n\n## 15. Final checklist\nnext\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["extract-section", "--name", "14", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## 14. Skip/defer list"))
+        .stdout(predicate::str::contains("## 15. Final checklist").not());
 }
 
 #[test]

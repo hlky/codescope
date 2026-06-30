@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.19 - 2026-06-30
+
+- Fixed `list-headings` to list all Markdown headings by default instead of silently stopping at the shared default match cap, while still honoring explicit `--max-matches`.
+- Added numbered Markdown heading shorthand for `extract-section`, such as `--name 14` matching `## 14. ...`.
+- Fixed `list-functions` to list all functions by default and to apply `--query` before `--max-matches`, so late matches are not hidden by earlier functions.
+
 ## v0.1.18 - 2026-06-30
 
 - Fixed project traversal to skip common vendored dependency and agent metadata roots such as `.codex`, `.agents`, `third_party`, `vendor`, `external`, and `_deps`, reducing noisy and slow `context-pack` scans on real projects.

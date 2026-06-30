@@ -52,7 +52,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 ## Common Flags
 
 - `--json`: emit stable JSON records.
-- `--max-matches N`: stop after `N` matches.
+- `--max-matches N`: stop after `N` matches. `list-functions` and `list-headings` list all matches by default unless this is provided.
 - `--lang python|c|cpp|c++|cuda|hip|cmake|markdown`: limit language search.
 - `--kind function|class|struct|enum|variable|target|block|heading|all`: limit symbol kind where supported.
 - `--backend auto|lsp|tree-sitter|lexical`: choose backend behavior.
@@ -261,7 +261,7 @@ Python uses tree-sitter for tolerant structural parsing.
 
 C-family files use clangd in `auto` when available, then fall back to tree-sitter. `--backend lsp` requires clangd and exits non-zero if clangd cannot run. `--backend lexical` is a rough fallback for functions, types, variables, and references. `definition`, `type-of`, and `hover` use clangd for precise C-family position navigation.
 
-Markdown uses tree-sitter for block parsing. `list-headings` returns heading records with qualified names based on heading nesting. `extract-section` returns the heading and its content until the next heading at the same or higher level. Fenced code headings are ignored by the parser.
+Markdown uses tree-sitter for block parsing. `list-headings` returns all heading records by default with qualified names based on heading nesting; pass `--max-matches N` to cap output. `extract-section` returns the heading and its content until the next heading at the same or higher level, and numbered headings can be selected by shorthand such as `--name 14` for `## 14. ...`. Fenced code headings are ignored by the parser.
 
 CMake uses lexical command parsing for `CMakeLists.txt` and `*.cmake`. `extract-variable` returns full `set(...)`, `option(...)`, `unset(...)`, and mutating `list(...)` commands for a variable. `extract-block` returns matched `if/foreach/function/macro/while` blocks by command name, full header, or argument token. Add `--contains TEXT` to narrow to nested blocks containing text, `--around-line N` to narrow to blocks containing a line, and `--largest` or `--smallest` to choose one block from the narrowed result. `extract-symbol --kind target` returns an `add_library(...)`, `add_executable(...)`, or `pybind11_add_module(...)` target with related `target_*`, `add_dependencies(...)`, `set_property(...)`, `install(TARGETS ...)`, and generator-expression references such as `$<TARGET_LINKER_FILE:target>`. `references` finds variable and target tokens, including `${VAR}` references.
 

@@ -58,7 +58,7 @@ The first production slice supports tree-sitter-backed Python extraction, clangd
 Current implementation:
 
 - Python structural parsing via tree-sitter.
-- C-family semantic symbols/references plus definition, type, and hover navigation via clangd LSP when available.
+- Function listing, C-family semantic symbols/references, plus definition, type, and hover navigation via clangd LSP when available.
 - Python structural definition navigation for functions, classes, variables, and imports, with best-effort `type-of` and `hover` summaries.
 - `callees`, bounded `callgraph`, and `dataflow` graph output for focused execution and value-flow slices.
 - Heuristic `tests-for` discovery by symbol or file, including Python test symbols, C-family test macros, and CMake `add_test(...)` entries.
@@ -69,7 +69,7 @@ Current implementation:
 - `workspace-map` output for agents, summarizing languages, source/test/doc roots, build files, CMake targets, common tool availability, Git status, ignored directories, and notes.
 - Normalized diagnostics from `cargo check --message-format=json`, clangd LSP, Ruff, mypy, Pyright, and CMake configure/build output.
 - CMake variables, command blocks, narrowed block selection, targets, and references via lexical scanning.
-- Markdown headings and sections via tree-sitter.
+- Complete `list-functions` and `list-headings` output by default, with explicit `--max-matches` caps and numbered Markdown heading shorthand such as `--name 14`.
 - Previewable, diff-aware edit operations for literal text, regexes, symbols, semantic renames, import/module paths, and Markdown headings/links.
 - Codex skill packaging in `skill/SKILL.md`.
 

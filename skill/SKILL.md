@@ -90,8 +90,10 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - CMake block extraction supports `--contains TEXT`, `--around-line N`, `--largest`, and `--smallest` to narrow broad condition matches to the relevant nested region.
 - CMake targets include `add_library(...)`, `add_executable(...)`, and `pybind11_add_module(...)` definitions plus related `target_*`, `add_dependencies(...)`, `set_property(...)`, `install(TARGETS ...)`, and `$<TARGET_...:name>` generator-expression references.
 - CMake references find bare names and `${NAME}` references.
+- `list-functions` lists all functions by default unless `--max-matches N` is provided; `--query` filters before the cap.
 - Markdown heading discovery uses tree-sitter and ignores fenced-code headings.
 - Markdown headings have nested qualified names like `Usage.Installation`; `extract-section` returns the heading and content until the next heading at the same or higher level.
+- `list-headings` lists all Markdown headings by default unless `--max-matches N` is provided; numbered headings can be extracted with shorthand like `--name 14`.
 - Use `--lang markdown` to limit search to Markdown and `--kind heading` for heading symbols.
 - Edit commands default to preview mode and print contextual diffs. Use `--apply` to write files and `--confirm` with `--apply` to require a clean Git worktree before editing.
 - Edit commands support `--include`, `--exclude`, `--max-files`, and `--lang` for scoped, filetype-aware changes.

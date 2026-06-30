@@ -385,6 +385,11 @@ fn parse_line_range(value: &str) -> Result<LineRange, String> {
     Ok(LineRange { start, end })
 }
 
+fn max_matches_was_requested() -> bool {
+    std::env::args_os()
+        .any(|arg| arg == "--max-matches" || arg.to_string_lossy().starts_with("--max-matches="))
+}
+
 pub fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -795,8 +800,16 @@ fn symbols_output(symbols: Vec<Symbol>, json: bool, source_output: bool) -> RunO
 fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
     match cli.command {
         Command::ListFunctions(args) => {
-            let mut symbols =
-                collect_symbols(&args.common, Some(SymbolKindFilter::Function), None)?;
+            let json = args.common.json;
+            let mut common = args.common;
+            let max_matches_requested = max_matches_was_requested();
+            let max_matches = if max_matches_requested {
+                common.max_matches
+            } else {
+                usize::MAX
+            };
+            common.max_matches = usize::MAX;
+            let mut symbols = collect_symbols(&common, Some(SymbolKindFilter::Function), None)?;
             if let Some(query) = args.query {
                 let query = query.to_ascii_lowercase();
                 symbols.retain(|symbol| {
@@ -810,13 +823,18 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
                             .contains(&query)
                 });
             }
-            symbols.truncate(args.common.max_matches);
-            Ok(symbols_output(symbols, args.common.json, false))
+            symbols.truncate(max_matches);
+            Ok(symbols_output(symbols, json, false))
         }
         Command::ListHeadings(args) => {
-            let mut symbols = collect_markdown_headings(&args.common, args.query.as_deref())?;
-            symbols.truncate(args.common.max_matches);
-            Ok(symbols_output(symbols, args.common.json, false))
+            let json = args.common.json;
+            let mut common = args.common;
+            if !max_matches_was_requested() {
+                common.max_matches = usize::MAX;
+            }
+            let mut symbols = collect_markdown_headings(&common, args.query.as_deref())?;
+            symbols.truncate(common.max_matches);
+            Ok(symbols_output(symbols, json, false))
         }
         Command::ExtractFunction(args) => {
             let mut symbols = collect_symbols(
