@@ -387,7 +387,8 @@ fn tests_for_name_finds_python_test_referencing_symbol() {
         .success()
         .stdout(predicate::str::contains("tests/test_sample.py"))
         .stdout(predicate::str::contains("test_helper"))
-        .stdout(predicate::str::contains("reason:"));
+        .stdout(predicate::str::contains("reason:"))
+        .stdout(predicate::str::contains("/sample.py:").not());
 }
 
 #[test]

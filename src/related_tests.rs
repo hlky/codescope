@@ -133,10 +133,7 @@ fn collect_python(
             &symbol.source,
             subject,
         );
-        if !is_python_test_symbol(&symbol.name, &symbol.qualified_name)
-            && reasons.is_empty()
-            && score < 50
-        {
+        if path_score == 0 && !is_python_test_symbol(&symbol.name, &symbol.qualified_name) {
             continue;
         }
         add_path_reasons(&mut reasons, path, subject);

@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.12 - 2026-06-30
+
+- Fixed `tests-for` Python discovery to avoid reporting ordinary implementation symbols as tests when only the subject text matches.
+
 ## v0.1.11 - 2026-06-30
 
 - Added `tests-for` heuristic test discovery by symbol or file, with scored reasons, JSON output, Python/C-family/CMake coverage, tests, docs, and skill guidance.
