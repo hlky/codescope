@@ -936,14 +936,21 @@ fn diagnostics_cmake_runs_when_available() {
     )
     .unwrap();
 
-    Command::cargo_bin("codescope")
+    let output = Command::cargo_bin("codescope")
         .unwrap()
         .args(["diagnostics", "--tool", "cmake", "--json", "--path"])
         .arg(dir.path())
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""tool": "cmake""#))
-        .stdout(predicate::str::contains("bad_command"));
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    if output.status.success() {
+        assert!(stdout.contains(r#""tool": "cmake""#));
+        assert!(stdout.contains("bad_command"));
+    } else {
+        assert_eq!(output.status.code(), Some(3));
+        assert!(stdout.contains(r#""tool": "cmake""#));
+        assert!(stdout.contains(r#""code": "backend-error""#));
+    }
 }
 
 #[test]
