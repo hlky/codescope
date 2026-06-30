@@ -81,6 +81,39 @@ reference
         .trim_start(),
     )
     .unwrap();
+    std::fs::write(
+        dir.path().join("CMakeLists.txt"),
+        r#"
+cmake_minimum_required(VERSION 3.20)
+project(Sample)
+
+set(SAMPLE_OPS
+    alpha
+    beta
+)
+
+list(APPEND SAMPLE_OPS
+    gamma
+)
+
+if(ENABLE_ACCELERATOR)
+    add_library(sample_core STATIC core.cpp)
+    target_link_libraries(sample_core PRIVATE dependency)
+    list(APPEND SAMPLE_TARGETS sample_core)
+endif()
+
+    foreach(item IN LISTS SAMPLE_OPS)
+    set(sample_generated_target "sample_generated_${item}")
+    add_library(${sample_generated_target} STATIC generated.cpp)
+    target_include_directories(${sample_generated_target} PRIVATE include)
+    set_target_properties(${sample_generated_target} PROPERTIES OUTPUT_NAME generated)
+    add_custom_command(TARGET ${sample_generated_target} POST_BUILD COMMAND echo done)
+    add_executable(sample_tool ${item}.cpp)
+endforeach()
+"#
+        .trim_start(),
+    )
+    .unwrap();
     dir
 }
 
@@ -226,6 +259,106 @@ fn extract_symbol_can_find_markdown_heading() {
         .assert()
         .success()
         .stdout(predicate::str::contains("heading, Project.Usage"));
+}
+
+#[test]
+fn cmake_variables_blocks_targets_and_references_can_be_extracted() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-variable",
+            "--name",
+            "SAMPLE_OPS",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("set(SAMPLE_OPS"))
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("list(APPEND SAMPLE_OPS"));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-block",
+            "--name",
+            "ENABLE_ACCELERATOR",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("if(ENABLE_ACCELERATOR)"))
+        .stdout(predicate::str::contains("endif()"));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-symbol",
+            "--kind",
+            "target",
+            "--name",
+            "sample_core",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("add_library(sample_core"))
+        .stdout(predicate::str::contains(
+            "target_link_libraries(sample_core",
+        ));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "references",
+            "--name",
+            "SAMPLE_OPS",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reference"));
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "extract-symbol",
+            "--kind",
+            "target",
+            "--name",
+            "sample_generated_target",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "add_library(${sample_generated_target}",
+        ))
+        .stdout(predicate::str::contains(
+            "target_include_directories(${sample_generated_target}",
+        ))
+        .stdout(predicate::str::contains(
+            "set_target_properties(${sample_generated_target}",
+        ))
+        .stdout(predicate::str::contains(
+            "add_custom_command(TARGET ${sample_generated_target}",
+        ));
 }
 
 #[test]

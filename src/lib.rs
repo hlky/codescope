@@ -1,5 +1,6 @@
 pub mod cfamily;
 pub mod cli;
+pub mod cmake;
 pub mod context;
 pub mod lsp;
 pub mod markdown;

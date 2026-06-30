@@ -31,6 +31,7 @@ enum Command {
     ListHeadings(QueryArgs),
     ExtractFunction(NamedArgs),
     ExtractSection(NamedArgs),
+    ExtractBlock(NamedArgs),
     ExtractSymbol(SymbolArgs),
     ExtractVariable(VariableArgs),
     References(NamedArgs),
@@ -183,6 +184,15 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
             symbols.truncate(args.common.max_matches);
             Ok((symbols, args.common.json, true))
         }
+        Command::ExtractBlock(args) => {
+            let mut symbols = collect_symbols(
+                &args.common,
+                Some(SymbolKindFilter::Block),
+                Some(&args.name),
+            )?;
+            symbols.truncate(args.common.max_matches);
+            Ok((symbols, args.common.json, true))
+        }
         Command::ExtractSymbol(args) => {
             let filter = if args.kind == SymbolKindFilter::All {
                 None
@@ -254,6 +264,9 @@ fn collect_symbols(
             Some(Language::Python) => {
                 out.extend(crate::python::symbols(&file, &text, kind, wanted))
             }
+            Some(Language::Cmake) => {
+                out.extend(crate::cmake::symbols(&file, &text, kind, wanted));
+            }
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
                 c_family.push((file, text));
             }
@@ -323,6 +336,12 @@ fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, 
         };
         match language_for_path(&file) {
             Some(Language::Python) => out.extend(crate::python::references(
+                &file,
+                &text,
+                wanted,
+                common.max_matches - out.len(),
+            )),
+            Some(Language::Cmake) => out.extend(crate::cmake::references(
                 &file,
                 &text,
                 wanted,

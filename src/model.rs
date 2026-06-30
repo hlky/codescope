@@ -13,6 +13,7 @@ pub enum LanguageFilter {
     Cxx,
     Cuda,
     Hip,
+    Cmake,
     Markdown,
 }
 
@@ -24,6 +25,7 @@ pub enum Language {
     Cpp,
     Cuda,
     Hip,
+    Cmake,
     Markdown,
     Text,
 }
@@ -36,6 +38,7 @@ impl fmt::Display for Language {
             Self::Cpp => "cpp",
             Self::Cuda => "cuda",
             Self::Hip => "hip",
+            Self::Cmake => "cmake",
             Self::Markdown => "markdown",
             Self::Text => "text",
         };
@@ -50,6 +53,8 @@ pub enum SymbolKindFilter {
     Struct,
     Enum,
     Variable,
+    Target,
+    Block,
     Heading,
     All,
 }
@@ -62,6 +67,8 @@ pub enum SymbolKind {
     Struct,
     Enum,
     Variable,
+    Target,
+    Block,
     Heading,
     Reference,
 }
@@ -74,6 +81,8 @@ impl fmt::Display for SymbolKind {
             Self::Struct => "struct",
             Self::Enum => "enum",
             Self::Variable => "variable",
+            Self::Target => "target",
+            Self::Block => "block",
             Self::Heading => "heading",
             Self::Reference => "reference",
         };
@@ -153,6 +162,8 @@ pub fn kind_matches(filter: Option<SymbolKindFilter>, kind: SymbolKind) -> bool 
         Some(SymbolKindFilter::Struct) => kind == SymbolKind::Struct,
         Some(SymbolKindFilter::Enum) => kind == SymbolKind::Enum,
         Some(SymbolKindFilter::Variable) => kind == SymbolKind::Variable,
+        Some(SymbolKindFilter::Target) => kind == SymbolKind::Target,
+        Some(SymbolKindFilter::Block) => kind == SymbolKind::Block,
         Some(SymbolKindFilter::Heading) => kind == SymbolKind::Heading,
     }
 }

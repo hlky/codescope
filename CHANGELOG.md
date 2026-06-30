@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.2 - 2026-06-30
+
+- Added CMake file discovery for `CMakeLists.txt` and `*.cmake`.
+- Added CMake variable extraction for `set`, `option`, `unset`, and mutating `list` commands.
+- Added CMake block extraction for condition and loop regions with `extract-block`.
+- Added CMake target extraction for target definitions and related target setup commands.
+- Added CMake reference lookup for bare names and `${NAME}` references.
+- Updated documentation, skill metadata, and tests for CMake workflows.
+
 ## v0.1.1 - 2026-06-29
 
 - Added tree-sitter backed Markdown heading discovery with `list-headings`.

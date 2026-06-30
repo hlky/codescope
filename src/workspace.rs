@@ -11,9 +11,16 @@ pub const CPP_EXTS: &[&str] = &[
 ];
 pub const CUDA_EXTS: &[&str] = &["cu", "cuh"];
 pub const HIP_EXTS: &[&str] = &["hip"];
+pub const CMAKE_EXTS: &[&str] = &["cmake"];
 pub const MARKDOWN_EXTS: &[&str] = &["md", "markdown", "mdown", "mkdn"];
 
 pub fn language_for_path(path: &Path) -> Option<Language> {
+    if path
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("CMakeLists.txt"))
+    {
+        return Some(Language::Cmake);
+    }
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     if PY_EXTS.contains(&ext.as_str()) {
         Some(Language::Python)
@@ -21,6 +28,8 @@ pub fn language_for_path(path: &Path) -> Option<Language> {
         Some(Language::Cuda)
     } else if HIP_EXTS.contains(&ext.as_str()) {
         Some(Language::Hip)
+    } else if CMAKE_EXTS.contains(&ext.as_str()) {
+        Some(Language::Cmake)
     } else if ext == "c" {
         Some(Language::C)
     } else if CPP_EXTS.contains(&ext.as_str()) {
@@ -40,6 +49,7 @@ pub fn language_allowed(language: Language, filter: Option<LanguageFilter>) -> b
         Some(LanguageFilter::Cpp | LanguageFilter::Cxx) => language == Language::Cpp,
         Some(LanguageFilter::Cuda) => language == Language::Cuda,
         Some(LanguageFilter::Hip) => language == Language::Hip,
+        Some(LanguageFilter::Cmake) => language == Language::Cmake,
         Some(LanguageFilter::Markdown) => language == Language::Markdown,
     }
 }
@@ -125,6 +135,14 @@ mod tests {
         assert_eq!(language_for_path(Path::new("x.hpp")), Some(Language::Cpp));
         assert_eq!(language_for_path(Path::new("x.cu")), Some(Language::Cuda));
         assert_eq!(language_for_path(Path::new("x.hip")), Some(Language::Hip));
+        assert_eq!(
+            language_for_path(Path::new("CMakeLists.txt")),
+            Some(Language::Cmake)
+        );
+        assert_eq!(
+            language_for_path(Path::new("x.cmake")),
+            Some(Language::Cmake)
+        );
         assert_eq!(
             language_for_path(Path::new("x.md")),
             Some(Language::Markdown)
