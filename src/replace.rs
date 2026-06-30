@@ -4,6 +4,7 @@ use std::process::Command;
 
 use anyhow::{Context, bail};
 use regex::{Captures, Regex};
+use serde::Serialize;
 
 use crate::model::{LanguageFilter, SymbolKindFilter};
 use crate::path_display::display_path;
@@ -35,7 +36,7 @@ pub struct Replacement {
     pub expand_captures: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ReplaceSummary {
     pub files_scanned: usize,
     pub files_changed: usize,
@@ -44,7 +45,7 @@ pub struct ReplaceSummary {
     pub diffs: Vec<FileDiff>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct FileDiff {
     pub path: PathBuf,
     pub replacements: usize,
@@ -143,7 +144,7 @@ pub fn render(summary: &ReplaceSummary) -> String {
     out
 }
 
-fn validate_options(options: &ReplaceOptions) -> anyhow::Result<()> {
+pub(crate) fn validate_options(options: &ReplaceOptions) -> anyhow::Result<()> {
     if options.max_files == 0 {
         bail!("--max-files must be greater than zero");
     }
@@ -271,11 +272,11 @@ fn replace_identifier(text: &str, identifier: &str, replacement: &str) -> (Strin
     (out, count)
 }
 
-fn identifier_boundary_before(text: &str, byte_index: usize, identifier: &str) -> bool {
+pub(crate) fn identifier_boundary_before(text: &str, byte_index: usize, identifier: &str) -> bool {
     boundary_char_allowed(text[..byte_index].chars().next_back(), identifier)
 }
 
-fn identifier_boundary_after(text: &str, byte_index: usize, identifier: &str) -> bool {
+pub(crate) fn identifier_boundary_after(text: &str, byte_index: usize, identifier: &str) -> bool {
     boundary_char_allowed(text[byte_index..].chars().next(), identifier)
 }
 
@@ -295,7 +296,12 @@ fn boundary_char_allowed(neighbor: Option<char>, identifier: &str) -> bool {
     }
 }
 
-fn path_allowed(root: &Path, path: &Path, include: &[String], exclude: &[String]) -> bool {
+pub(crate) fn path_allowed(
+    root: &Path,
+    path: &Path,
+    include: &[String],
+    exclude: &[String],
+) -> bool {
     let rel = path.strip_prefix(root).unwrap_or(path);
     let normalized = rel.to_string_lossy().replace('\\', "/");
     let file_name = path
@@ -326,7 +332,7 @@ fn glob_matches(pattern: &str, value: &str) -> bool {
     Regex::new(&regex).is_ok_and(|compiled| compiled.is_match(value))
 }
 
-fn unified_diff(path: &Path, old_text: &str, new_text: &str) -> String {
+pub(crate) fn unified_diff(path: &Path, old_text: &str, new_text: &str) -> String {
     let old_lines: Vec<&str> = old_text.lines().collect();
     let new_lines: Vec<&str> = new_text.lines().collect();
     let max = old_lines.len().max(new_lines.len());
@@ -350,7 +356,7 @@ fn unified_diff(path: &Path, old_text: &str, new_text: &str) -> String {
     out
 }
 
-fn ensure_clean_git_worktree(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn ensure_clean_git_worktree(path: &Path) -> anyhow::Result<()> {
     let root = if path.is_file() {
         path.parent().unwrap_or(path)
     } else {

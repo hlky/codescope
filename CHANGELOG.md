@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.13 - 2026-06-30
+
+- Added `rename-symbol --semantic` with tree-sitter Python definition/reference edits, clangd-backed C-family rename plans, skipped textual match reporting, JSON plan output, conflict detection, tests, docs, and skill guidance.
+
 ## v0.1.12 - 2026-06-30
 
 - Fixed `tests-for` Python discovery to avoid reporting ordinary implementation symbols as tests when only the subject text matches.

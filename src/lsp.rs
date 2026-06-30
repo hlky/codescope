@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
 use url::Url;
 
@@ -15,6 +15,14 @@ use crate::workspace::{language_for_path, line_slice, read_text};
 pub struct ClangdOptions {
     pub root: PathBuf,
     pub compile_commands_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextEdit {
+    pub path: PathBuf,
+    pub start: usize,
+    pub end: usize,
+    pub replacement: String,
 }
 
 pub fn clangd_available() -> bool {
@@ -106,6 +114,41 @@ pub fn references(
     }
     client.shutdown();
     Ok(out)
+}
+
+pub fn rename(
+    files: &[(PathBuf, String)],
+    options: &ClangdOptions,
+    wanted: &str,
+    replacement: &str,
+) -> anyhow::Result<Vec<TextEdit>> {
+    let mut client = ClangdClient::start(options)?;
+    let mut positions = Vec::new();
+    for (path, text) in files {
+        positions.extend(client.symbol_positions_for_file(path, text, wanted)?);
+    }
+    if positions.is_empty() {
+        client.shutdown();
+        bail!("clangd could not find symbol {wanted} for semantic rename");
+    }
+    if positions.len() > 1 {
+        client.shutdown();
+        bail!(
+            "clangd found multiple candidate definitions for {wanted}; semantic rename is ambiguous"
+        );
+    }
+    let (uri, line, character) = positions.remove(0);
+    let result = client.request(
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "newName": replacement
+        }),
+    )?;
+    let edits = workspace_edit_to_text_edits(&result)?;
+    client.shutdown();
+    Ok(edits)
 }
 
 pub fn callers(
@@ -861,6 +904,110 @@ fn published_diagnostics_to_records(message: &Value) -> Vec<DiagnosticRecord> {
         .iter()
         .filter_map(|raw| lsp_diagnostic_to_record(&path, language, raw))
         .collect()
+}
+
+fn workspace_edit_to_text_edits(value: &Value) -> anyhow::Result<Vec<TextEdit>> {
+    let mut out = Vec::new();
+    if let Some(changes) = value.get("changes").and_then(Value::as_object) {
+        for (uri, edits) in changes {
+            let Some(path) = path_from_uri(uri) else {
+                continue;
+            };
+            let text = read_text(&path).unwrap_or_default();
+            if let Some(edits) = edits.as_array() {
+                for edit in edits {
+                    if let Some(text_edit) = lsp_text_edit(&path, &text, edit)? {
+                        out.push(text_edit);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(document_changes) = value.get("documentChanges").and_then(Value::as_array) {
+        for document_change in document_changes {
+            let Some(uri) = document_change
+                .pointer("/textDocument/uri")
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(path) = path_from_uri(uri) else {
+                continue;
+            };
+            let text = read_text(&path).unwrap_or_default();
+            let Some(edits) = document_change.get("edits").and_then(Value::as_array) else {
+                continue;
+            };
+            for edit in edits {
+                if let Some(text_edit) = lsp_text_edit(&path, &text, edit)? {
+                    out.push(text_edit);
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn lsp_text_edit(path: &Path, text: &str, value: &Value) -> anyhow::Result<Option<TextEdit>> {
+    let Some(range) = value.get("range") else {
+        return Ok(None);
+    };
+    let start_line = range
+        .pointer("/start/line")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let start_character = range
+        .pointer("/start/character")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let end_line = range
+        .pointer("/end/line")
+        .and_then(Value::as_u64)
+        .unwrap_or(start_line as u64) as usize;
+    let end_character = range
+        .pointer("/end/character")
+        .and_then(Value::as_u64)
+        .unwrap_or(start_character as u64) as usize;
+    let start = lsp_position_to_byte(text, start_line, start_character)
+        .with_context(|| format!("invalid clangd rename start range in {}", path.display()))?;
+    let end = lsp_position_to_byte(text, end_line, end_character)
+        .with_context(|| format!("invalid clangd rename end range in {}", path.display()))?;
+    Ok(Some(TextEdit {
+        path: path.to_path_buf(),
+        start,
+        end,
+        replacement: value
+            .get("newText")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+    }))
+}
+
+fn lsp_position_to_byte(text: &str, target_line: usize, target_character: usize) -> Option<usize> {
+    let mut line_start = 0;
+    let mut line = 0;
+    for (idx, ch) in text.char_indices() {
+        if line == target_line {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            line_start = idx + 1;
+        }
+    }
+    if line != target_line {
+        return (target_line == line && target_character == 0).then_some(text.len());
+    }
+    let line_text = text[line_start..].split('\n').next().unwrap_or("");
+    let mut character = 0;
+    for (offset, ch) in line_text.char_indices() {
+        if character == target_character {
+            return Some(line_start + offset);
+        }
+        character += if ch.len_utf16() == 2 { 2 } else { 1 };
+    }
+    (character == target_character).then_some(line_start + line_text.len())
 }
 
 fn lsp_diagnostic_to_record(

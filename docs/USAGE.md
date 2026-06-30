@@ -33,6 +33,7 @@ codescope replace-text --find "old" --replace "new" --path . --preview
 codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path . --preview
 codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
 codescope rename-symbol --from Foo --to Bar --path . --preview
+codescope rename-symbol --from Foo --to Bar --semantic --path . --preview
 codescope rewrite-import --from old.module --to new.module --path . --preview
 codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
@@ -123,6 +124,7 @@ All edit commands are previewable and diff-aware:
 - `--exclude GLOB`: skip matching paths, for example `--exclude "vendor/*"`.
 - `--max-files N`: fail instead of editing more than `N` files.
 - `--lang python|c|cpp|c++|cuda|hip|cmake|markdown`: limit edits by file type.
+- `--json`: emit machine-readable edit summaries or semantic rename plans.
 
 ## Edit Commands
 
@@ -146,6 +148,16 @@ codescope replace --name OldSymbol --with NewSymbol --kind function --path . --p
 codescope rename-symbol --from Foo --to Bar --kind class --path . --preview
 codescope rename-symbol --from OldNamespace --to NewNamespace --lang cpp --path include --preview
 ```
+
+Add `--semantic` to `rename-symbol` for stricter refactor plans. Python semantic rename uses tree-sitter identifier nodes for definitions and references, leaves strings and comments unchanged, and reports remaining identifier-boundary textual matches as skipped. C-family semantic rename uses clangd `textDocument/rename`; if clangd is unavailable or reports an ambiguous/failed rename, the command exits with code `3`.
+
+```bash
+codescope rename-symbol --from Foo --to Bar --semantic --path . --preview
+codescope rename-symbol --from Foo --to Bar --semantic --apply --confirm --path .
+codescope rename-symbol --from Foo --to Bar --semantic --lang cpp --root . --compile-commands-dir build --path src --preview
+```
+
+Semantic plain output separates changed definitions, changed references, ambiguous matches, skipped matches, and diffs. With `--json`, the plan includes `backend`, `confidence`, `definitions_changed`, `references_changed`, `ambiguous_matches`, `skipped_matches`, `files_changed`, `diffs`, and `notes`.
 
 `rewrite-import` rewrites Python import/module paths while preserving `import` and `from` syntax:
 

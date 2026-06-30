@@ -48,6 +48,7 @@ codescope replace-text --find "old" --replace "new" --path src --preview
 codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path src --preview
 codescope replace --name OldSymbol --with NewSymbol --kind function --path src --preview
 codescope rename-symbol --from Foo --to Bar --path src --preview
+codescope rename-symbol --from Foo --to Bar --semantic --path src --preview
 codescope rewrite-import --from old.module --to new.module --path src --preview
 codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
@@ -80,6 +81,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - Edit commands support `--include`, `--exclude`, `--max-files`, and `--lang` for scoped, filetype-aware changes.
 - Use `replace-text` for literal replacement and `replace-regex` for regex replacement with capture expansion.
 - Use `replace --kind function|class|struct|enum|variable|target|block|heading` or `rename-symbol --kind ...` when a symbol should be verified before rewriting identifier-boundary matches.
+- Use `rename-symbol --semantic` for safer refactor previews. Python semantic rename changes tree-sitter definition/reference identifier nodes and reports strings/comments as skipped; C-family semantic rename requires clangd and exits with code `3` if clangd cannot run or the rename is ambiguous.
 - Use `rewrite-import` for Python import/module path changes.
 - Use `rewrite-markdown` for Markdown heading text or link target rewrites.
 - Use `--json` when stable fields are needed. Symbol records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`; navigation records add `start_column`, `end_column`, and optional `detail`; related test records include `test_name`, `qualified_name`, `reason`, `score`, and `source`; diagnostic records include `path`, `language`, `backend`, `tool`, `severity`, `code`, `message`, start/end line and column fields, and `related`. Explicit diagnostics tool failures are emitted as `backend-error` records and exit with code `3`.

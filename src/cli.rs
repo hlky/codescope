@@ -12,6 +12,7 @@ use crate::model::{
     Backend, Language, NavigationRecord, RelatedTestRecord, Symbol, SymbolKind, SymbolKindFilter,
 };
 use crate::replace::{Pattern, ReplaceOptions, Replacement};
+use crate::semantic_rename::SemanticRenameOptions;
 use crate::workspace::{language_for_path, line_slice, read_text, source_files};
 
 const EXIT_FOUND: u8 = 0;
@@ -177,6 +178,8 @@ struct EditCommonArgs {
     max_files: usize,
     #[arg(long)]
     confirm: bool,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -221,6 +224,12 @@ struct RenameSymbolArgs {
     to: String,
     #[arg(long, value_enum)]
     kind: Option<SymbolKindFilter>,
+    #[arg(long)]
+    semantic: bool,
+    #[arg(long)]
+    root: Option<PathBuf>,
+    #[arg(long)]
+    compile_commands_dir: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -332,10 +341,40 @@ pub fn run() -> ExitCode {
             ExitCode::from(EXIT_FOUND)
         }
         Ok(RunOutput::Replace(summary)) => {
-            if summary.replacements == 0 {
+            if summary.summary.replacements == 0 {
                 return ExitCode::from(EXIT_NO_MATCH);
             }
-            println!("{}", crate::replace::render(&summary));
+            if summary.json {
+                match serde_json::to_string_pretty(&summary.summary) {
+                    Ok(value) => println!("{value}"),
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                println!("{}", crate::replace::render(&summary.summary));
+            }
+            ExitCode::from(EXIT_FOUND)
+        }
+        Ok(RunOutput::SemanticRename(plan, json)) => {
+            if plan.replacements == 0
+                && plan.ambiguous_matches.is_empty()
+                && plan.skipped_matches.is_empty()
+            {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            if json {
+                match serde_json::to_string_pretty(&plan) {
+                    Ok(value) => println!("{value}"),
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                println!("{}", crate::semantic_rename::render(&plan));
+            }
             ExitCode::from(EXIT_FOUND)
         }
         Ok(RunOutput::Diagnostics {
@@ -434,7 +473,8 @@ enum RunOutput {
         json: bool,
         source_output: bool,
     },
-    Replace(crate::replace::ReplaceSummary),
+    Replace(ReplaceRunOutput),
+    SemanticRename(crate::semantic_rename::RenamePlan, bool),
     Diagnostics {
         records: Vec<DiagnosticRecord>,
         json: bool,
@@ -452,6 +492,11 @@ enum RunOutput {
         pack: ContextPack,
         json: bool,
     },
+}
+
+struct ReplaceRunOutput {
+    summary: crate::replace::ReplaceSummary,
+    json: bool,
 }
 
 fn symbols_output(symbols: Vec<Symbol>, json: bool, source_output: bool) -> RunOutput {
@@ -616,9 +661,7 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
         Command::Replace(args) => {
             run_symbol_replacement(&args.common, &args.name, &args.replacement, args.kind)
         }
-        Command::RenameSymbol(args) => {
-            run_symbol_replacement(&args.common, &args.from, &args.to, args.kind)
-        }
+        Command::RenameSymbol(args) => run_rename_symbol(args),
         Command::RewriteImport(args) => run_replacement(
             &import_common(args.common),
             Replacement {
@@ -1302,7 +1345,30 @@ fn run_replacement(
 ) -> Result<RunOutput, AppError> {
     let summary =
         crate::replace::run(&replace_options(common), &replacement).map_err(AppError::Config)?;
-    Ok(RunOutput::Replace(summary))
+    Ok(RunOutput::Replace(ReplaceRunOutput {
+        summary,
+        json: common.json,
+    }))
+}
+
+fn run_rename_symbol(args: RenameSymbolArgs) -> Result<RunOutput, AppError> {
+    if args.semantic {
+        crate::replace::validate_symbol_request(&args.from, &args.to, args.kind)
+            .map_err(AppError::Config)?;
+        let plan = crate::semantic_rename::run(
+            &SemanticRenameOptions {
+                replace: replace_options(&args.common),
+                root: args.root,
+                compile_commands_dir: args.compile_commands_dir,
+            },
+            &args.from,
+            &args.to,
+        )
+        .map_err(AppError::Backend)?;
+        Ok(RunOutput::SemanticRename(plan, args.common.json))
+    } else {
+        run_symbol_replacement(&args.common, &args.from, &args.to, args.kind)
+    }
 }
 
 fn run_symbol_replacement(
@@ -1323,12 +1389,15 @@ fn run_symbol_replacement(
             max_matches: 1,
         };
         if collect_symbols(&query, Some(kind), Some(from))?.is_empty() {
-            return Ok(RunOutput::Replace(crate::replace::ReplaceSummary {
-                files_scanned: 0,
-                files_changed: 0,
-                replacements: 0,
-                applied: common.apply,
-                diffs: Vec::new(),
+            return Ok(RunOutput::Replace(ReplaceRunOutput {
+                summary: crate::replace::ReplaceSummary {
+                    files_scanned: 0,
+                    files_changed: 0,
+                    replacements: 0,
+                    applied: common.apply,
+                    diffs: Vec::new(),
+                },
+                json: common.json,
             }));
         }
     }

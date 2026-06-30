@@ -276,6 +276,136 @@ fn rename_symbol_uses_identifier_boundaries() {
 }
 
 #[test]
+fn semantic_python_rename_changes_definition_and_call_sites() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sample.py"),
+        "def Foo():\n    return 1\n\nvalue = Foo()\ntext = \"Foo\"\n# Foo stays visible\n\ndef Foobar():\n    return Foo()\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "rename-symbol",
+            "--from",
+            "Foo",
+            "--to",
+            "Bar",
+            "--semantic",
+            "--apply",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("definitions changed: 1"))
+        .stdout(predicate::str::contains("skipped matches: 2"));
+
+    let text = std::fs::read_to_string(dir.path().join("sample.py")).unwrap();
+    assert!(text.contains("def Bar():"));
+    assert!(text.contains("value = Bar()"));
+    assert!(text.contains("return Bar()"));
+    assert!(text.contains("def Foobar():"));
+    assert!(text.contains("text = \"Foo\""));
+    assert!(text.contains("# Foo stays visible"));
+}
+
+#[test]
+fn semantic_python_rename_json_reports_skipped_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sample.py"),
+        "def Foo():\n    return Foo()\n\nnote = 'Foo'\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "rename-symbol",
+            "--from",
+            "Foo",
+            "--to",
+            "Bar",
+            "--semantic",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            r#""backend": "tree-sitter-python""#,
+        ))
+        .stdout(predicate::str::contains(r#""definitions_changed": 1"#))
+        .stdout(predicate::str::contains(r#""skipped_matches""#))
+        .stdout(predicate::str::contains(
+            "textual identifier match outside semantic edit set",
+        ));
+}
+
+#[test]
+fn semantic_cfamily_rename_fails_when_clangd_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sample.cpp"), "int Foo() { return 1; }\n").unwrap();
+
+    let mut command = Command::cargo_bin("codescope").unwrap();
+    command.env("PATH", "");
+    command
+        .args([
+            "rename-symbol",
+            "--from",
+            "Foo",
+            "--to",
+            "Bar",
+            "--semantic",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn semantic_cfamily_rename_uses_clangd_when_available() {
+    if which::which("clangd").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sample.cpp"),
+        "int Foo() { return 1; }\nint caller() { return Foo(); }\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "rename-symbol",
+            "--from",
+            "Foo",
+            "--to",
+            "Bar",
+            "--semantic",
+            "--lang",
+            "cpp",
+            "--preview",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("backend: clangd"))
+        .stdout(
+            predicate::str::contains("+int Bar()")
+                .or(predicate::str::contains("+int caller() { return Bar(); }")),
+        );
+}
+
+#[test]
 fn rewrite_import_preserves_import_syntax() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

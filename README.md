@@ -37,6 +37,7 @@ codescope replace-text --find "old" --replace "new" --path . --preview
 codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path . --preview
 codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
 codescope rename-symbol --from Foo --to Bar --path . --preview
+codescope rename-symbol --from Foo --to Bar --semantic --path . --preview
 codescope rewrite-import --from old.module --to new.module --path . --preview
 codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
@@ -55,7 +56,7 @@ Current implementation:
 - Normalized diagnostics from `cargo check --message-format=json`, clangd LSP, Ruff, mypy, Pyright, and CMake configure/build output.
 - CMake variables, command blocks, narrowed block selection, targets, and references via lexical scanning.
 - Markdown headings and sections via tree-sitter.
-- Previewable, diff-aware edit operations for literal text, regexes, symbols, import/module paths, and Markdown headings/links.
+- Previewable, diff-aware edit operations for literal text, regexes, symbols, semantic renames, import/module paths, and Markdown headings/links.
 - Codex skill packaging in `skill/SKILL.md`.
 
 See [docs/USAGE.md](docs/USAGE.md) for command details.
@@ -83,7 +84,9 @@ The install script copies `codescope.exe` into `%USERPROFILE%\.codex\bin` and in
 - `2`: CLI or configuration error
 - `3`: explicitly required backend failed
 
-Edit commands default to preview mode. Add `--apply` to write changes, and add `--confirm` with `--apply` to require a clean Git worktree before writing so changes can be undone through Git. All edit commands support `--include`, `--exclude`, `--lang`, and `--max-files`.
+Edit commands default to preview mode. Add `--apply` to write changes, and add `--confirm` with `--apply` to require a clean Git worktree before writing so changes can be undone through Git. All edit commands support `--include`, `--exclude`, `--lang`, `--max-files`, and `--json`.
+
+`rename-symbol` preserves its identifier-boundary rewrite behavior by default. Add `--semantic` for a stricter refactor preview: Python uses tree-sitter identifier nodes for definitions and references, C-family files use clangd rename, and comments/strings or other textual matches outside the safe edit set are reported as skipped. C-family semantic rename exits with code `3` when clangd cannot run or cannot produce a safe rename.
 
 ## JSON Output
 

@@ -12,4 +12,5 @@ pub mod path_display;
 pub mod python;
 pub mod related_tests;
 pub mod replace;
+pub mod semantic_rename;
 pub mod workspace;
