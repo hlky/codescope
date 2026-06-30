@@ -29,6 +29,8 @@ codescope impact --file src/foo.cpp --changed-lines 10-30 --path .
 codescope context --name foo --path .
 codescope context-pack --name foo --path .
 codescope context-pack --file src/foo.py --around-line 80 --path .
+codescope workspace-map --path .
+codescope workspace-map --path . --json
 codescope diagnostics --path .
 codescope diagnostics --tool cargo --json --path .
 codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
@@ -46,7 +48,7 @@ codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" -
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, and IDE-style navigation, heuristic test discovery and change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, and IDE-style navigation, heuristic test discovery and change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, compact workspace maps, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
@@ -57,6 +59,7 @@ Current implementation:
 - `impact` reports for a symbol, file, or changed line range, combining definitions, references, callers, callees, tests, docs, CMake target associations, confidence, and notes.
 - C-family structural fallback via tree-sitter and lexical scanning.
 - Ranked `context-pack` output for a symbol or file line, combining definitions, imports/includes, callers, references, nearby tests, docs, CMake metadata, diagnostics, and notes under an approximate source-character budget.
+- `workspace-map` output for agents, summarizing languages, source/test/doc roots, build files, CMake targets, common tool availability, Git status, ignored directories, and notes.
 - Normalized diagnostics from `cargo check --message-format=json`, clangd LSP, Ruff, mypy, Pyright, and CMake configure/build output.
 - CMake variables, command blocks, narrowed block selection, targets, and references via lexical scanning.
 - Markdown headings and sections via tree-sitter.
@@ -199,3 +202,5 @@ Navigation records from `definition`, `type-of`, and `hover` include line and co
 ```
 
 `context-pack --json` emits a pack with `subject`, `budget`, ranked `items`, whole-item `omitted` entries, and `notes`. Each item includes `role`, `path`, `start_line`, `end_line`, `language`, `backend`, `score`, `reason`, and `source`.
+
+`workspace-map --json` emits a compact project map with `root`, language file counts, source roots, build systems, CMake targets, test roots, doc roots, tool availability, Git status, ignored patterns, and notes. Use `--max-targets N` to cap target output for large CMake projects.

@@ -14,3 +14,4 @@ pub mod related_tests;
 pub mod replace;
 pub mod semantic_rename;
 pub mod workspace;
+pub mod workspace_map;

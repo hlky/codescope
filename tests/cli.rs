@@ -149,6 +149,67 @@ fn version_exits_successfully() {
 }
 
 #[test]
+fn workspace_map_json_reports_languages_and_cmake_targets() {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("pyproject.toml"),
+        "[project]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["workspace-map", "--json", "--path"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        value["languages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["language"] == "python" && entry["files"] == 2)
+    );
+    assert!(
+        value["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "sample_core")
+    );
+    assert!(
+        value["build_systems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["path"] == "Cargo.toml")
+    );
+}
+
+#[test]
+fn workspace_map_plain_is_concise() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["workspace-map", "--max-targets", "1", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Workspace Map"))
+        .stdout(predicate::str::contains("languages:"))
+        .stdout(predicate::str::contains("targets:"))
+        .stdout(predicate::str::contains("target list truncated"));
+}
+
+#[test]
 fn replace_text_previews_diff_without_modifying_files() {
     let dir = fixture();
     let file = dir.path().join("sample.py");

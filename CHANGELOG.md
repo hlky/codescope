@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.15 - 2026-06-30
+
+- Added `workspace-map` for compact project overviews with language counts, source/test/doc roots, build files, CMake targets, tool availability, Git status, JSON output, docs, skill guidance, and CLI coverage.
+
 ## v0.1.14 - 2026-06-30
 
 - Added `impact` reports for symbol, file, and changed-line subjects, combining definitions, references, callers, best-effort callees, related tests, Markdown docs, CMake target associations, confidence notes, JSON output, docs, skill guidance, and CLI coverage.

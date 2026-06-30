@@ -57,6 +57,7 @@ enum Command {
     RewriteImport(RewriteImportArgs),
     RewriteMarkdown(RewriteMarkdownArgs),
     Diagnostics(DiagnosticsArgs),
+    WorkspaceMap(WorkspaceMapArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -278,6 +279,16 @@ struct DiagnosticsArgs {
     json: bool,
     #[arg(long, default_value_t = 20)]
     max_matches: usize,
+}
+
+#[derive(Args, Clone, Debug)]
+struct WorkspaceMapArgs {
+    #[arg(long, default_value = ".")]
+    path: PathBuf,
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value_t = 50)]
+    max_targets: usize,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -510,6 +521,21 @@ pub fn run() -> ExitCode {
             println!("{rendered}");
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::WorkspaceMap { map, json }) => {
+            let rendered = if json {
+                match serde_json::to_string_pretty(&map) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                crate::workspace_map::render_plain(&map)
+            };
+            println!("{rendered}");
+            ExitCode::from(EXIT_FOUND)
+        }
         Err(AppError::Config(error)) => {
             eprintln!("{error:#}");
             ExitCode::from(EXIT_CONFIG)
@@ -548,6 +574,10 @@ enum RunOutput {
     },
     ContextPack {
         pack: ContextPack,
+        json: bool,
+    },
+    WorkspaceMap {
+        map: crate::workspace_map::WorkspaceMap,
         json: bool,
     },
 }
@@ -849,7 +879,20 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
         ),
         Command::RewriteMarkdown(args) => run_markdown_rewrite(args),
         Command::Diagnostics(args) => run_diagnostics(args),
+        Command::WorkspaceMap(args) => run_workspace_map(args),
     }
+}
+
+fn run_workspace_map(args: WorkspaceMapArgs) -> Result<RunOutput, AppError> {
+    let map = crate::workspace_map::collect(&crate::workspace_map::WorkspaceMapOptions {
+        path: args.path,
+        max_targets: args.max_targets,
+    })
+    .map_err(AppError::Config)?;
+    Ok(RunOutput::WorkspaceMap {
+        map,
+        json: args.json,
+    })
 }
 
 fn run_context_pack(args: ContextPackArgs) -> Result<RunOutput, AppError> {

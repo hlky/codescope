@@ -29,6 +29,8 @@ codescope impact --file src/foo.cpp --changed-lines 10-30 --path .
 codescope context --name foo --path .
 codescope context-pack --name foo --path .
 codescope context-pack --file src/foo.py --around-line 80 --path .
+codescope workspace-map --path .
+codescope workspace-map --path . --json
 codescope diagnostics --path .
 codescope diagnostics --tool cargo --json --path .
 codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
@@ -108,6 +110,20 @@ codescope context-pack --name Foo --budget 2000 --intent fix-bug --json --path .
 For `--name`, the pack starts with matching definitions, then imports/includes, direct callers, references, related tests, docs, CMake build metadata, and diagnostics when available. For `--file --around-line`, the pack starts with the smallest symbol enclosing that line. `--budget` is an approximate source-character budget; lower-ranked items are omitted whole and reported under `omitted`.
 
 Plain output groups each ranked item by role. JSON output includes `subject`, `budget`, `items`, `omitted`, and `notes`; each item includes `role`, `path`, `start_line`, `end_line`, `language`, `backend`, `score`, `reason`, and `source`.
+
+## Workspace Maps
+
+`workspace-map` gives agents a compact project overview before deeper inspection:
+
+```bash
+codescope workspace-map --path .
+codescope workspace-map --path . --json
+codescope workspace-map --path . --max-targets 20
+```
+
+It summarizes language file counts, source roots, test roots, documentation roots, common build/package files, CMake targets, common tool availability, Git status, ignored directory patterns, and notes. Missing tools are reported as unavailable rather than errors. `--max-targets` caps CMake target output for large projects.
+
+Plain output is a short report. JSON output includes `root`, `languages`, `roots`, `build_systems`, `targets`, `test_roots`, `doc_roots`, `tools`, `git`, `ignored_patterns`, and `notes`.
 
 ## Diagnostics
 
