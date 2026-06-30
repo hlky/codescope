@@ -1,4 +1,5 @@
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::SystemTime;
@@ -331,16 +332,44 @@ fn run_with_timeout(mut command: Command, tool: &str) -> anyhow::Result<Output> 
     let mut child = command
         .spawn()
         .with_context(|| format!("failed to start {tool}"))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .with_context(|| format!("failed to capture {tool} stdout"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .with_context(|| format!("failed to capture {tool} stderr"))?;
+    let stdout_thread = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        stdout.read_to_end(&mut buffer).map(|_| buffer)
+    });
+    let stderr_thread = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        stderr.read_to_end(&mut buffer).map(|_| buffer)
+    });
     let start = Instant::now();
     loop {
-        if child.try_wait()?.is_some() {
-            return child
-                .wait_with_output()
-                .with_context(|| format!("failed to read {tool} output"));
+        if let Some(status) = child.try_wait()? {
+            let stdout = stdout_thread
+                .join()
+                .map_err(|_| anyhow!("{tool} stdout reader panicked"))?
+                .with_context(|| format!("failed to read {tool} stdout"))?;
+            let stderr = stderr_thread
+                .join()
+                .map_err(|_| anyhow!("{tool} stderr reader panicked"))?
+                .with_context(|| format!("failed to read {tool} stderr"))?;
+            return Ok(Output {
+                status,
+                stdout,
+                stderr,
+            });
         }
         if start.elapsed() >= TOOL_TIMEOUT {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
             return Err(anyhow!(
                 "{tool} timed out after {}s",
                 TOOL_TIMEOUT.as_secs()

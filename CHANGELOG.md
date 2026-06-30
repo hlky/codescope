@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.8 - 2026-06-30
+
+- Fixed diagnostics tool timeout handling to drain child process output while waiting, avoiding blocked cargo/other verbose diagnostics runs.
+
 ## v0.1.7 - 2026-06-30
 
 - Added normalized `diagnostics` output for cargo, clangd, Ruff, mypy, Pyright, and CMake configure/build diagnostics.
