@@ -17,6 +17,9 @@ codescope list-headings --path docs
 codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
+codescope callees --name foo --path .
+codescope callgraph --name foo --depth 2 --path . --json
+codescope dataflow --name CONFIG --path .
 codescope definition --name Foo --path .
 codescope definition --file src/foo.cpp --line 42 --column 17 --backend lsp
 codescope type-of --file src/foo.py --line 42 --column 12 --json
@@ -68,6 +71,32 @@ codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json --
 Use either `--name` or the complete position form `--file --line --column`. Lines and columns are 1-based. C-family position navigation uses clangd; explicit `--backend lsp` exits with code `3` when clangd cannot run. Python uses structural tree-sitter lookup for definitions of functions, classes, variables, and imports; `type-of` and `hover` are best-effort until a semantic Python backend is available.
 
 Plain output includes the resolved source snippet and any detail text. JSON navigation records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `start_column`, `end_line`, `end_column`, `source`, and optional `detail`.
+
+## Call Graph And Dataflow
+
+`callees` mirrors `callers` and reports directly called functions from matching function bodies:
+
+```bash
+codescope callees --name handler --path .
+```
+
+`callgraph` performs a bounded traversal over callers, callees, or both:
+
+```bash
+codescope callgraph --name handler --depth 2 --direction both --max-nodes 100 --path .
+codescope callgraph --name handler --depth 2 --json --path .
+```
+
+`dataflow` reports simple value-flow slices for Python, C-family files, and CMake:
+
+```bash
+codescope dataflow --name CONFIG --lang python --path .
+codescope dataflow --name SAMPLE_OPS --lang cmake --path .
+```
+
+Plain graph output is grouped by edge kind. JSON graph output includes `nodes` and `edges`. Nodes include `id`, `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and optional `source`. Edges include `source`, `target`, `kind`, `backend`, and `confidence`; edge kinds are `calls`, `called_by`, `reads`, `writes`, `mutates`, and `imports`.
+
+Confidence is backend dependent: clangd/LSP semantic edges are high confidence, tree-sitter structural edges are medium confidence, and lexical fallback edges are low confidence. Python and CMake dataflow currently covers assignments, references, updates/mutations, and import or module origins where detectable; C-family dataflow is initially lexical and limited to references and assignments.
 
 ## Test Discovery
 

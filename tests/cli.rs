@@ -1254,6 +1254,126 @@ fn references_and_callers_work() {
 }
 
 #[test]
+fn callees_finds_direct_python_call() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "callees",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "caller",
+            "--lang",
+            "python",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("helper"));
+}
+
+#[test]
+fn callgraph_json_has_stable_nodes_edges_and_depth() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("app.py"),
+        "def helper():\n    return 1\n\ndef service():\n    return helper()\n\ndef handler():\n    return service()\n\ndef route():\n    return handler()\n",
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "callgraph",
+            "--name",
+            "handler",
+            "--depth",
+            "2",
+            "--direction",
+            "both",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        value["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["qualified_name"] == "handler")
+    );
+    assert!(
+        value["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["kind"] == "calls")
+    );
+    assert!(
+        value["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|edge| edge["kind"] == "called_by")
+    );
+}
+
+#[test]
+fn callgraph_handles_recursive_cycle() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("app.py"),
+        "def loop():\n    return loop()\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "callgraph",
+            "--name",
+            "loop",
+            "--depth",
+            "3",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""kind": "calls""#));
+}
+
+#[test]
+fn dataflow_cmake_reports_writes_mutations_and_reads() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "dataflow",
+            "--name",
+            "SAMPLE_OPS",
+            "--lang",
+            "cmake",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## writes"))
+        .stdout(predicate::str::contains("## mutates"))
+        .stdout(predicate::str::contains("## reads"))
+        .stdout(predicate::str::contains("SAMPLE_OPS"));
+}
+
+#[test]
 fn definition_name_finds_python_structural_symbol() {
     let dir = fixture();
     Command::cargo_bin("codescope")

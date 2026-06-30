@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand, error::ErrorKind};
+use clap::{Args, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use serde::Serialize;
 
 use crate::context::add_import_context;
@@ -43,6 +43,9 @@ enum Command {
     ExtractVariable(VariableArgs),
     References(NamedArgs),
     Callers(NamedArgs),
+    Callees(NamedArgs),
+    Callgraph(CallgraphArgs),
+    Dataflow(NamedArgs),
     Definition(NavigationArgs),
     TypeOf(NavigationArgs),
     Hover(NavigationArgs),
@@ -92,6 +95,27 @@ struct NamedArgs {
     common: CommonArgs,
     #[arg(long)]
     name: String,
+}
+
+#[derive(Args, Clone, Debug)]
+struct CallgraphArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    name: String,
+    #[arg(long, default_value_t = 1)]
+    depth: usize,
+    #[arg(long, value_enum, default_value_t = CallgraphDirection::Both)]
+    direction: CallgraphDirection,
+    #[arg(long, default_value_t = 100)]
+    max_nodes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CallgraphDirection {
+    Callers,
+    Callees,
+    Both,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -536,6 +560,24 @@ pub fn run() -> ExitCode {
             println!("{rendered}");
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::Graph { graph, json }) => {
+            if graph.nodes.is_empty() || graph.edges.is_empty() {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            let rendered = if json {
+                match serde_json::to_string_pretty(&graph) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                crate::graph::render_plain(&graph)
+            };
+            println!("{rendered}");
+            ExitCode::from(EXIT_FOUND)
+        }
         Err(AppError::Config(error)) => {
             eprintln!("{error:#}");
             ExitCode::from(EXIT_CONFIG)
@@ -578,6 +620,10 @@ enum RunOutput {
     },
     WorkspaceMap {
         map: crate::workspace_map::WorkspaceMap,
+        json: bool,
+    },
+    Graph {
+        graph: crate::graph::Graph,
         json: bool,
     },
 }
@@ -829,6 +875,13 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
             symbols.truncate(args.common.max_matches);
             Ok(symbols_output(symbols, args.common.json, true))
         }
+        Command::Callees(args) => {
+            let mut symbols = collect_callees(&args.common, &args.name)?;
+            symbols.truncate(args.common.max_matches);
+            Ok(symbols_output(symbols, args.common.json, true))
+        }
+        Command::Callgraph(args) => run_callgraph(args),
+        Command::Dataflow(args) => run_dataflow(args),
         Command::Definition(args) => run_navigation(args, NavigationRequest::Definition),
         Command::TypeOf(args) => run_navigation(args, NavigationRequest::TypeOf),
         Command::Hover(args) => run_navigation(args, NavigationRequest::Hover),
@@ -2393,6 +2446,171 @@ fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, App
         )?);
     }
     Ok(out)
+}
+
+fn collect_callees(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, AppError> {
+    let mut broad = common.clone();
+    broad.max_matches = usize::MAX;
+    let functions = collect_symbols(&broad, Some(SymbolKindFilter::Function), None)?;
+    let primary = crate::graph::matching_function_symbols(&functions, wanted);
+    let mut out = Vec::new();
+    for symbol in primary {
+        let body = if symbol.source.contains('\n') {
+            symbol.source.lines().skip(1).collect::<Vec<_>>().join("\n")
+        } else {
+            symbol.source.clone()
+        };
+        for name in crate::graph::direct_call_names(&body, &symbol.name) {
+            let matches = crate::graph::matching_function_symbols(&functions, &name);
+            if matches.is_empty() {
+                continue;
+            }
+            for callee in matches {
+                if !out
+                    .iter()
+                    .any(|existing: &Symbol| same_range(existing, &callee))
+                {
+                    out.push(callee);
+                }
+                if out.len() >= common.max_matches {
+                    return Ok(out);
+                }
+            }
+        }
+    }
+    out.sort_by_key(|symbol| {
+        (
+            crate::path_display::display_path(&symbol.path),
+            symbol.start_line,
+            symbol.qualified_name.clone(),
+        )
+    });
+    Ok(out)
+}
+
+fn run_callgraph(args: CallgraphArgs) -> Result<RunOutput, AppError> {
+    let mut graph = crate::graph::Graph::new();
+    let mut queue = std::collections::VecDeque::from([(args.name.clone(), 0usize)]);
+    let mut visited = std::collections::HashSet::new();
+    while let Some((name, depth)) = queue.pop_front() {
+        if !visited.insert(name.clone()) || graph.nodes.len() >= args.max_nodes {
+            continue;
+        }
+        let subjects = graph_subject_nodes(&args.common, &name)?;
+        for subject in &subjects {
+            graph.add_symbol(subject);
+        }
+        if depth >= args.depth {
+            continue;
+        }
+        if matches!(
+            args.direction,
+            CallgraphDirection::Callers | CallgraphDirection::Both
+        ) {
+            for caller in collect_callers(&args.common, &name)? {
+                let caller_id = graph.add_symbol(&caller);
+                for subject in &subjects {
+                    let subject_id = crate::graph::symbol_id(subject);
+                    graph.add_edge(
+                        subject_id,
+                        caller_id.clone(),
+                        crate::graph::EdgeKind::CalledBy,
+                        caller.backend.clone(),
+                        crate::graph::confidence(&caller.backend),
+                    );
+                }
+                queue.push_back((caller.qualified_name.clone(), depth + 1));
+                if graph.nodes.len() >= args.max_nodes {
+                    break;
+                }
+            }
+        }
+        if matches!(
+            args.direction,
+            CallgraphDirection::Callees | CallgraphDirection::Both
+        ) {
+            for callee in collect_callees(&args.common, &name)? {
+                let callee_id = graph.add_symbol(&callee);
+                for subject in &subjects {
+                    let subject_id = crate::graph::symbol_id(subject);
+                    graph.add_edge(
+                        subject_id,
+                        callee_id.clone(),
+                        crate::graph::EdgeKind::Calls,
+                        callee.backend.clone(),
+                        crate::graph::confidence(&callee.backend),
+                    );
+                }
+                queue.push_back((callee.qualified_name.clone(), depth + 1));
+                if graph.nodes.len() >= args.max_nodes {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(RunOutput::Graph {
+        graph: graph.truncated(args.max_nodes),
+        json: args.common.json,
+    })
+}
+
+fn graph_subject_nodes(common: &CommonArgs, name: &str) -> Result<Vec<Symbol>, AppError> {
+    let mut broad = common.clone();
+    broad.max_matches = usize::MAX;
+    let functions = collect_symbols(&broad, Some(SymbolKindFilter::Function), None)?;
+    let mut subjects = crate::graph::matching_function_symbols(&functions, name);
+    subjects.truncate(common.max_matches.max(1));
+    Ok(subjects)
+}
+
+fn run_dataflow(args: NamedArgs) -> Result<RunOutput, AppError> {
+    let path = args
+        .common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", args.common.path.display()))
+        .map_err(AppError::Config)?;
+    let mut graph = crate::graph::Graph::new();
+    let mut scanned = 0usize;
+    for file in source_files(&path, args.common.lang) {
+        if scanned >= args.common.max_matches {
+            break;
+        }
+        let Some(text) = read_text(&file) else {
+            continue;
+        };
+        let Some(language) = language_for_path(&file) else {
+            continue;
+        };
+        let partial = match language {
+            Language::Python => crate::graph::python_dataflow(&file, &text, &args.name),
+            Language::Cmake => crate::graph::cmake_dataflow(&file, &text, &args.name),
+            Language::C | Language::Cpp | Language::Cuda | Language::Hip => {
+                crate::graph::cfamily_dataflow(&file, &text, &args.name)
+            }
+            _ => crate::graph::Graph::new(),
+        };
+        if partial.edges.is_empty() {
+            continue;
+        }
+        for node in partial.nodes {
+            graph.add_node(node);
+        }
+        for edge in partial.edges {
+            graph.add_edge(
+                edge.source,
+                edge.target,
+                edge.kind,
+                edge.backend,
+                edge.confidence,
+            );
+        }
+        scanned += 1;
+    }
+    Ok(RunOutput::Graph {
+        graph,
+        json: args.common.json,
+    })
 }
 
 fn collect_c_family_symbols(

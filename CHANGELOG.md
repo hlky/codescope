@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.16 - 2026-06-30
+
+- Added `callees`, bounded `callgraph`, and `dataflow` graph slices with JSON node/edge output, plain grouped edge rendering, Python/CMake/C-family best-effort extraction, CLI coverage, docs, and skill guidance.
+
 ## v0.1.15 - 2026-06-30
 
 - Added `workspace-map` for compact project overviews with language counts, source/test/doc roots, build files, CMake targets, tool availability, Git status, JSON output, docs, skill guidance, and CLI coverage.

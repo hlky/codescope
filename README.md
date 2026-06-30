@@ -17,6 +17,9 @@ codescope list-headings --path docs
 codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
+codescope callees --name foo --path .
+codescope callgraph --name foo --depth 2 --path . --json
+codescope dataflow --name CONFIG --path .
 codescope definition --name Foo --path .
 codescope definition --file src/foo.cpp --line 42 --column 17 --backend lsp
 codescope type-of --file src/foo.py --line 42 --column 12 --json
@@ -48,13 +51,14 @@ codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" -
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, and IDE-style navigation, heuristic test discovery and change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, compact workspace maps, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, call graphs, dataflow slices, and IDE-style navigation, heuristic test discovery and change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, compact workspace maps, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
 - Python structural parsing via tree-sitter.
 - C-family semantic symbols/references plus definition, type, and hover navigation via clangd LSP when available.
 - Python structural definition navigation for functions, classes, variables, and imports, with best-effort `type-of` and `hover` summaries.
+- `callees`, bounded `callgraph`, and `dataflow` graph output for focused execution and value-flow slices.
 - Heuristic `tests-for` discovery by symbol or file, including Python test symbols, C-family test macros, and CMake `add_test(...)` entries.
 - `impact` reports for a symbol, file, or changed line range, combining definitions, references, callers, callees, tests, docs, CMake target associations, confidence, and notes.
 - C-family structural fallback via tree-sitter and lexical scanning.
