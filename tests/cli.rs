@@ -614,6 +614,97 @@ fn tests_for_reports_cmake_add_test_mapping() {
 }
 
 #[test]
+fn related_file_finds_c_family_header_source_pair() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("include")).unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("include").join("foo.hpp"), "int foo();\n").unwrap();
+    std::fs::write(
+        dir.path().join("src").join("foo.cpp"),
+        "#include \"foo.hpp\"\nint foo() { return 1; }\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["related", "--file", "include/foo.hpp", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("src/foo.cpp"))
+        .stdout(predicate::str::contains("implementation"))
+        .stdout(predicate::str::contains(
+            "C-family header/source basename pair",
+        ));
+}
+
+#[test]
+fn related_file_finds_python_tests_and_docs() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["related", "--file", "sample.py", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tests/test_sample.py"))
+        .stdout(predicate::str::contains("test"))
+        .stdout(predicate::str::contains("README.md"))
+        .stdout(predicate::str::contains("doc"));
+}
+
+#[test]
+fn related_file_finds_cmake_build_links() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["related", "--file", "sample.cpp", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""relationship": "build""#))
+        .stdout(predicate::str::contains("CMakeLists.txt"))
+        .stdout(predicate::str::contains(
+            "CMake target references subject file",
+        ));
+}
+
+#[test]
+fn related_file_finds_markdown_links_and_backlinks() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("README.md"), "[Usage](docs/usage.md)\n").unwrap();
+    std::fs::create_dir(dir.path().join("docs")).unwrap();
+    std::fs::write(
+        dir.path().join("docs").join("usage.md"),
+        "[Home](../README.md)\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["related", "--file", "README.md", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("docs/usage.md"))
+        .stdout(predicate::str::contains("linked"));
+}
+
+#[test]
+fn related_name_includes_definition_references_and_tests() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["related", "--name", "helper", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""relationship": "definition""#))
+        .stdout(predicate::str::contains(r#""relationship": "reference""#))
+        .stdout(predicate::str::contains(r#""relationship": "test""#));
+}
+
+#[test]
 fn impact_name_reports_callers_references_tests_and_docs() {
     let dir = fixture();
     Command::cargo_bin("codescope")

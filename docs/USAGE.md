@@ -26,6 +26,8 @@ codescope type-of --file src/foo.py --line 42 --column 12 --json
 codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json
 codescope tests-for --name foo --path .
 codescope tests-for --file src/foo.py --path . --json
+codescope related --file src/foo.py --path .
+codescope related --name Foo --path . --json
 codescope impact --name foo --path .
 codescope impact --file src/foo.cpp --path . --json
 codescope impact --file src/foo.cpp --changed-lines 10-30 --path .
@@ -111,6 +113,22 @@ codescope tests-for --file src/foo.cpp --path . --json --max-matches 10
 Use either `--name` or `--file`. Results are heuristic and should be verified: Python uses test file naming, imports, subject references, and tree-sitter test function/class extraction; C-family files use test/spec naming, common framework macros, and subject/header references; CMake reports `add_test(...)` entries that reference the subject. Markdown documentation is not reported as tests.
 
 Plain output includes score and reason lines. JSON records include `path`, `language`, `backend`, `test_name`, `qualified_name`, `start_line`, `end_line`, `reason`, `score`, and `source`.
+
+## Related Files
+
+`related` reports files a developer would naturally open next:
+
+```bash
+codescope related --file include/foo.hpp --path .
+codescope related --file src/foo.py --path . --json
+codescope related --name Foo --path . --max-matches 20
+```
+
+Use either `--file` or `--name`. File subjects report C-family header/implementation pairs, CMake build definitions that mention a source, Python tests, Markdown docs, Markdown links/backlinks, and nearby modules. Name subjects report matching definitions, direct references, tests, docs, and CMake target/reference links.
+
+Results are ranked heuristically. Exact structural relationships, such as header/source pairs and CMake target source mentions, score above textual references. Same-directory and nearby paths receive a proximity bonus when multiple candidates share a basename.
+
+Plain output includes relationship, score, and reason lines. JSON records include `path`, `relationship`, `score`, `reason`, `language`, `start_line`, and `end_line`. Relationship values are `definition`, `reference`, `test`, `doc`, `header`, `implementation`, `build`, `linked`, and `neighbor`.
 
 ## Impact Reports
 

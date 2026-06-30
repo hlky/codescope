@@ -197,6 +197,72 @@ pub struct RelatedTestRecord {
     pub source: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Relationship {
+    Definition,
+    Reference,
+    Test,
+    Doc,
+    Header,
+    Implementation,
+    Build,
+    Linked,
+    Neighbor,
+}
+
+impl fmt::Display for Relationship {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Definition => "definition",
+            Self::Reference => "reference",
+            Self::Test => "test",
+            Self::Doc => "doc",
+            Self::Header => "header",
+            Self::Implementation => "implementation",
+            Self::Build => "build",
+            Self::Linked => "linked",
+            Self::Neighbor => "neighbor",
+        };
+        f.write_str(value)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RelatedRecord {
+    #[serde(serialize_with = "crate::path_display::serialize")]
+    pub path: PathBuf,
+    pub relationship: Relationship,
+    pub score: usize,
+    pub reason: String,
+    pub language: Language,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+impl RelatedRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        path: PathBuf,
+        relationship: Relationship,
+        score: usize,
+        reason: impl Into<String>,
+        language: Language,
+        start_line: usize,
+        end_line: usize,
+    ) -> Self {
+        Self {
+            path,
+            relationship,
+            score,
+            reason: reason.into(),
+            language,
+            start_line,
+            end_line,
+        }
+    }
+}
+
 impl RelatedTestRecord {
     #[allow(clippy::too_many_arguments)]
     pub fn new(

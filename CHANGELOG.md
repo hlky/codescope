@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.17 - 2026-06-30
+
+- Added `related` for ranked next-file discovery by file or symbol, covering definitions, references, tests, docs, C-family header/implementation pairs, CMake build links, Markdown links/backlinks, JSON output, docs, skill guidance, and CLI coverage.
+
 ## v0.1.16 - 2026-06-30
 
 - Added `callees`, bounded `callgraph`, and `dataflow` graph slices with JSON node/edge output, plain grouped edge rendering, Python/CMake/C-family best-effort extraction, CLI coverage, docs, and skill guidance.

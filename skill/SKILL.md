@@ -37,6 +37,8 @@ codescope type-of --file src/config.py --line 42 --column 12 --json
 codescope hover --file src/native.cpp --line 42 --column 17 --backend lsp --json
 codescope tests-for --name parse_config --path src
 codescope tests-for --file src/config.py --path src --json
+codescope related --file src/config.py --path .
+codescope related --name Config --path . --json
 codescope impact --name parse_config --path src
 codescope impact --file src/native.cpp --path src --json
 codescope impact --file src/native.cpp --changed-lines 10-30 --path src
@@ -74,6 +76,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - Use `callees` to see direct calls made by a function, and `callgraph --depth N --direction callers|callees|both --max-nodes N` for bounded execution slices. Graph JSON includes symbol nodes and `calls`/`called_by` edges.
 - Use `dataflow --name NAME` for simple value-flow slices. Python and CMake report writes, reads, mutations, and imports where detectable; C-family dataflow is currently lexical and limited to references and assignments.
 - Use `tests-for` to jump from a symbol name or implementation file to likely tests. Results are heuristic: Python uses test names/imports/references with tree-sitter test symbols; C-family uses test/spec files and common framework macros; CMake reports `add_test(...)`; Markdown docs are excluded.
+- Use `related` to jump from a file or symbol to likely next files. It reports definitions, references, tests, docs, C-family header/implementation pairs, CMake build links, Markdown links/backlinks, and nearby modules with relationship labels and scores.
 - Use `impact` before changing a symbol, file, or line range when you need a blast-radius report. It combines definitions, references, callers, best-effort callees, related tests, Markdown docs, CMake target associations, confidence, and notes. `--file --changed-lines START-END` resolves the enclosing symbol and delegates to symbol impact.
 - Use `--backend lsp` to require semantic C-family results, and pass `--compile-commands-dir` when the project has a non-default compilation database.
 - Use `--root` when the clangd project root differs from the search `--path`.
@@ -96,7 +99,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - Use `rename-symbol --semantic` for safer refactor previews. Python semantic rename changes tree-sitter definition/reference identifier nodes and reports strings/comments as skipped; C-family semantic rename requires clangd and exits with code `3` if clangd cannot run or the rename is ambiguous.
 - Use `rewrite-import` for Python import/module path changes.
 - Use `rewrite-markdown` for Markdown heading text or link target rewrites.
-- Use `--json` when stable fields are needed. Symbol records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`; graph records include `nodes` and `edges` with edge `kind`, `backend`, and `confidence`; navigation records add `start_column`, `end_column`, and optional `detail`; related test records include `test_name`, `qualified_name`, `reason`, `score`, and `source`; impact reports include grouped `definitions`, `references`, `callers`, `callees`, `tests`, `docs`, `build_targets`, `diagnostics`, `confidence`, and `notes`; workspace maps include `root`, `languages`, `roots`, `build_systems`, `targets`, `test_roots`, `doc_roots`, `tools`, `git`, `ignored_patterns`, and `notes`; diagnostic records include `path`, `language`, `backend`, `tool`, `severity`, `code`, `message`, start/end line and column fields, and `related`. Explicit diagnostics tool failures are emitted as `backend-error` records and exit with code `3`.
+- Use `--json` when stable fields are needed. Symbol records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`; graph records include `nodes` and `edges` with edge `kind`, `backend`, and `confidence`; navigation records add `start_column`, `end_column`, and optional `detail`; related test records include `test_name`, `qualified_name`, `reason`, `score`, and `source`; related records include `path`, `relationship`, `score`, `reason`, `language`, `start_line`, and `end_line`; impact reports include grouped `definitions`, `references`, `callers`, `callees`, `tests`, `docs`, `build_targets`, `diagnostics`, `confidence`, and `notes`; workspace maps include `root`, `languages`, `roots`, `build_systems`, `targets`, `test_roots`, `doc_roots`, `tools`, `git`, `ignored_patterns`, and `notes`; diagnostic records include `path`, `language`, `backend`, `tool`, `severity`, `code`, `message`, start/end line and column fields, and `related`. Explicit diagnostics tool failures are emitted as `backend-error` records and exit with code `3`.
 - Graph confidence is high for semantic clangd/LSP results, medium for tree-sitter structural results, and low for lexical fallback.
 
 ## Agent Workflow
@@ -113,11 +116,12 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 10. Use `codescope references`, `codescope callers`, `codescope callees`, `codescope callgraph`, or `codescope dataflow` before opening broad execution or value-flow regions.
 11. Use `codescope definition`, `codescope type-of`, or `codescope hover` when you have a symbol use location and need IDE-style navigation.
 12. Use `codescope tests-for --name SYMBOL --path .` or `codescope tests-for --file PATH --path .` to find likely tests before changing behavior.
-13. Use `codescope impact --name SYMBOL --path .` or `codescope impact --file PATH --path .` to estimate the blast radius before changing behavior.
-14. Use `codescope context-pack --name SYMBOL --path .` before broad file reads when preparing to edit a symbol.
-15. Use `codescope context-pack --file PATH --around-line LINE --path .` when the edit target is a line range rather than a known symbol.
-16. Use `codescope workspace-map --path .` when the repository layout is unfamiliar.
-17. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
-18. Use `codescope diagnostics --path .` before or after edits when compiler or IDE squiggles would change the next step.
-19. Use edit commands with `--preview` first, use `--apply` to write files or `--confirm` with `--apply` to require a clean Git worktree before editing.
-20. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.
+13. Use `codescope related --file PATH --path .` or `codescope related --name SYMBOL --path .` to find adjacent files, docs, build metadata, tests, and references before opening broad trees.
+14. Use `codescope impact --name SYMBOL --path .` or `codescope impact --file PATH --path .` to estimate the blast radius before changing behavior.
+15. Use `codescope context-pack --name SYMBOL --path .` before broad file reads when preparing to edit a symbol.
+16. Use `codescope context-pack --file PATH --around-line LINE --path .` when the edit target is a line range rather than a known symbol.
+17. Use `codescope workspace-map --path .` when the repository layout is unfamiliar.
+18. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
+19. Use `codescope diagnostics --path .` before or after edits when compiler or IDE squiggles would change the next step.
+20. Use edit commands with `--preview` first, use `--apply` to write files or `--confirm` with `--apply` to require a clean Git worktree before editing.
+21. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.

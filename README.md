@@ -26,6 +26,8 @@ codescope type-of --file src/foo.py --line 42 --column 12 --json
 codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json
 codescope tests-for --name foo --path .
 codescope tests-for --file src/foo.py --path . --json
+codescope related --file src/foo.py --path .
+codescope related --name Foo --path . --json
 codescope impact --name foo --path .
 codescope impact --file src/foo.cpp --path . --json
 codescope impact --file src/foo.cpp --changed-lines 10-30 --path .
@@ -51,7 +53,7 @@ codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" -
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, call graphs, dataflow slices, and IDE-style navigation, heuristic test discovery and change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, compact workspace maps, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, call graphs, dataflow slices, and IDE-style navigation, heuristic test and related-file discovery, change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, compact workspace maps, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
@@ -60,6 +62,7 @@ Current implementation:
 - Python structural definition navigation for functions, classes, variables, and imports, with best-effort `type-of` and `hover` summaries.
 - `callees`, bounded `callgraph`, and `dataflow` graph output for focused execution and value-flow slices.
 - Heuristic `tests-for` discovery by symbol or file, including Python test symbols, C-family test macros, and CMake `add_test(...)` entries.
+- `related` discovery for likely next files: definitions, references, tests, docs, C-family header/implementation pairs, CMake build links, Markdown links, and nearby modules.
 - `impact` reports for a symbol, file, or changed line range, combining definitions, references, callers, callees, tests, docs, CMake target associations, confidence, and notes.
 - C-family structural fallback via tree-sitter and lexical scanning.
 - Ranked `context-pack` output for a symbol or file line, combining definitions, imports/includes, callers, references, nearby tests, docs, CMake metadata, diagnostics, and notes under an approximate source-character budget.
@@ -183,6 +186,22 @@ Related test records from `tests-for` include the candidate test location, heuri
 ```
 
 `tests-for` is heuristic. Verify the reported matches before treating them as exhaustive.
+
+Related records from `related` include a relationship label, score, reason, language, and line range:
+
+```json
+{
+  "path": "src/example.cpp",
+  "relationship": "implementation",
+  "score": 110,
+  "reason": "C-family header/source basename pair",
+  "language": "cpp",
+  "start_line": 1,
+  "end_line": 1
+}
+```
+
+Relationship values are `definition`, `reference`, `test`, `doc`, `header`, `implementation`, `build`, `linked`, and `neighbor`.
 
 `impact --json` emits a grouped report with `subject`, `definitions`, `references`, `callers`, `callees`, `tests`, `docs`, `build_targets`, `diagnostics`, `confidence`, and `notes`. Each entry includes `path`, `start_line`, `end_line`, `language`, `backend`, `kind`, `name`, `qualified_name`, `reason`, and `source`.
 

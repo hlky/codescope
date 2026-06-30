@@ -10,7 +10,8 @@ use crate::context_pack::{ContextPack, ContextPackItem};
 use crate::diagnostics::{DiagnosticOptions, DiagnosticRecord, DiagnosticTool};
 use crate::lsp::{ClangdOptions, NavigationRequest};
 use crate::model::{
-    Backend, Language, NavigationRecord, RelatedTestRecord, Symbol, SymbolKind, SymbolKindFilter,
+    Backend, Language, NavigationRecord, RelatedRecord, RelatedTestRecord, Symbol, SymbolKind,
+    SymbolKindFilter,
 };
 use crate::replace::{Pattern, ReplaceOptions, Replacement};
 use crate::semantic_rename::SemanticRenameOptions;
@@ -50,6 +51,7 @@ enum Command {
     TypeOf(NavigationArgs),
     Hover(NavigationArgs),
     TestsFor(TestsForArgs),
+    Related(RelatedArgs),
     Impact(ImpactArgs),
     Context(ContextArgs),
     ContextPack(ContextPackArgs),
@@ -340,6 +342,16 @@ struct TestsForArgs {
 }
 
 #[derive(Args, Clone, Debug)]
+struct RelatedArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
 struct ImpactArgs {
     #[command(flatten)]
     common: CommonArgs,
@@ -509,6 +521,24 @@ pub fn run() -> ExitCode {
             println!("{rendered}");
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::Related { records, json }) => {
+            if records.is_empty() {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            let rendered = if json {
+                match crate::output::related_json(&records) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                crate::output::related_plain(&records)
+            };
+            println!("{rendered}");
+            ExitCode::from(EXIT_FOUND)
+        }
         Ok(RunOutput::Impact { report, json }) => {
             if !report.has_entries() {
                 return ExitCode::from(EXIT_NO_MATCH);
@@ -608,6 +638,10 @@ enum RunOutput {
     },
     RelatedTests {
         records: Vec<RelatedTestRecord>,
+        json: bool,
+    },
+    Related {
+        records: Vec<RelatedRecord>,
         json: bool,
     },
     Impact {
@@ -886,6 +920,7 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
         Command::TypeOf(args) => run_navigation(args, NavigationRequest::TypeOf),
         Command::Hover(args) => run_navigation(args, NavigationRequest::Hover),
         Command::TestsFor(args) => run_tests_for(args),
+        Command::Related(args) => run_related(args),
         Command::Impact(args) => run_impact(args),
         Command::Context(args) => {
             let filter = if args.kind == SymbolKindFilter::All {
@@ -1007,6 +1042,21 @@ fn run_tests_for(args: TestsForArgs) -> Result<RunOutput, AppError> {
     })
     .map_err(AppError::Config)?;
     Ok(RunOutput::RelatedTests {
+        records,
+        json: args.common.json,
+    })
+}
+
+fn run_related(args: RelatedArgs) -> Result<RunOutput, AppError> {
+    let records = crate::related::collect(&crate::related::RelatedOptions {
+        path: args.common.path,
+        lang: args.common.lang,
+        name: args.name,
+        file: args.file,
+        max_matches: args.common.max_matches,
+    })
+    .map_err(AppError::Config)?;
+    Ok(RunOutput::Related {
         records,
         json: args.common.json,
     })
