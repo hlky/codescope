@@ -6,6 +6,7 @@ use ignore::WalkBuilder;
 use crate::model::{Language, LanguageFilter};
 
 pub const PY_EXTS: &[&str] = &["py"];
+pub const RUST_EXTS: &[&str] = &["rs"];
 pub const CPP_EXTS: &[&str] = &[
     "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "ipp", "tpp", "inl",
 ];
@@ -24,6 +25,8 @@ pub fn language_for_path(path: &Path) -> Option<Language> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     if PY_EXTS.contains(&ext.as_str()) {
         Some(Language::Python)
+    } else if RUST_EXTS.contains(&ext.as_str()) {
+        Some(Language::Rust)
     } else if CUDA_EXTS.contains(&ext.as_str()) {
         Some(Language::Cuda)
     } else if HIP_EXTS.contains(&ext.as_str()) {
@@ -45,6 +48,7 @@ pub fn language_allowed(language: Language, filter: Option<LanguageFilter>) -> b
     match filter {
         None => true,
         Some(LanguageFilter::Python) => language == Language::Python,
+        Some(LanguageFilter::Rust) => language == Language::Rust,
         Some(LanguageFilter::C) => language == Language::C,
         Some(LanguageFilter::Cpp | LanguageFilter::Cxx) => language == Language::Cpp,
         Some(LanguageFilter::Cuda) => language == Language::Cuda,
@@ -131,6 +135,7 @@ mod tests {
     #[test]
     fn language_detection_covers_supported_extensions() {
         assert_eq!(language_for_path(Path::new("x.py")), Some(Language::Python));
+        assert_eq!(language_for_path(Path::new("x.rs")), Some(Language::Rust));
         assert_eq!(language_for_path(Path::new("x.c")), Some(Language::C));
         assert_eq!(language_for_path(Path::new("x.hpp")), Some(Language::Cpp));
         assert_eq!(language_for_path(Path::new("x.cu")), Some(Language::Cuda));

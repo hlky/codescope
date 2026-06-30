@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.7 - 2026-06-30
+
+- Added normalized `diagnostics` output for cargo, clangd, Ruff, mypy, Pyright, and CMake configure/build diagnostics.
+- Added deterministic diagnostics auto mode, JSON backend-error records, tool timeouts, documentation, skill guidance, and CLI coverage.
+
 ## v0.1.6 - 2026-06-30
 
 - Normalized displayed Windows paths by removing verbatim `\\?\` prefixes and using `/` separators in plain, JSON, and edit preview output.

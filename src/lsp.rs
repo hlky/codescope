@@ -6,6 +6,7 @@ use anyhow::{Context, anyhow};
 use serde_json::{Value, json};
 use url::Url;
 
+use crate::diagnostics::{DiagnosticRecord, DiagnosticSeverity, RelatedDiagnostic};
 use crate::model::{Language, Symbol, SymbolKind, SymbolKindFilter, kind_matches, name_matches};
 use crate::workspace::{language_for_path, line_slice, read_text};
 
@@ -163,6 +164,25 @@ pub fn callers(
     Ok(out)
 }
 
+pub fn diagnostics(
+    files: &[(PathBuf, String)],
+    options: &ClangdOptions,
+    max_matches: usize,
+) -> anyhow::Result<Vec<DiagnosticRecord>> {
+    let mut client = ClangdClient::start(options)?;
+    let mut out = Vec::new();
+    for (path, text) in files {
+        let mut file_records = client.diagnostics_for_file(path, text)?;
+        out.append(&mut file_records);
+        if out.len() >= max_matches {
+            break;
+        }
+    }
+    client.shutdown();
+    out.truncate(max_matches);
+    Ok(out)
+}
+
 struct ClangdClient {
     child: Child,
     stdin: ChildStdin,
@@ -266,6 +286,22 @@ impl ClangdClient {
             self.visit_positions(&uri, symbols, &mut Vec::new(), wanted, &mut out);
         }
         Ok(out)
+    }
+
+    fn diagnostics_for_file(
+        &mut self,
+        path: &Path,
+        text: &str,
+    ) -> anyhow::Result<Vec<DiagnosticRecord>> {
+        let uri = uri_for_path(path)?;
+        self.open(path, text, &uri)?;
+        let result = self.request_collecting_diagnostics(
+            "textDocument/documentSymbol",
+            json!({ "textDocument": { "uri": uri } }),
+            &uri,
+        )?;
+        self.close(&uri)?;
+        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -459,6 +495,33 @@ impl ClangdClient {
         }
     }
 
+    fn request_collecting_diagnostics(
+        &mut self,
+        method: &str,
+        params: Value,
+        uri: &str,
+    ) -> anyhow::Result<Vec<DiagnosticRecord>> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
+        let mut out = Vec::new();
+        loop {
+            let message = self.read_message()?;
+            if message.get("id").and_then(Value::as_u64) == Some(id) {
+                if let Some(error) = message.get("error") {
+                    return Err(anyhow!("clangd {method} failed: {error}"));
+                }
+                return Ok(out);
+            }
+            if message.get("method").and_then(Value::as_str)
+                == Some("textDocument/publishDiagnostics")
+                && message.pointer("/params/uri").and_then(Value::as_str) == Some(uri)
+            {
+                out.extend(published_diagnostics_to_records(&message));
+            }
+        }
+    }
+
     fn notify(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
         self.send(json!({ "jsonrpc": "2.0", "method": method, "params": params }))
     }
@@ -570,6 +633,93 @@ fn call_hierarchy_item_to_symbol(item: &Value) -> Option<Symbol> {
         symbol_short_name(&name),
         qualified,
     )
+}
+
+fn published_diagnostics_to_records(message: &Value) -> Vec<DiagnosticRecord> {
+    let Some(uri) = message.pointer("/params/uri").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let Some(path) = path_from_uri(uri) else {
+        return Vec::new();
+    };
+    let language = language_for_path(&path).unwrap_or(Language::Text);
+    let Some(diagnostics) = message
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    diagnostics
+        .iter()
+        .filter_map(|raw| lsp_diagnostic_to_record(&path, language, raw))
+        .collect()
+}
+
+fn lsp_diagnostic_to_record(
+    path: &Path,
+    language: Language,
+    raw: &Value,
+) -> Option<DiagnosticRecord> {
+    let range = raw.get("range")?;
+    let code = raw.get("code").and_then(|code| {
+        code.as_str()
+            .map(ToOwned::to_owned)
+            .or_else(|| code.as_i64().map(|value| value.to_string()))
+    });
+    Some(DiagnosticRecord {
+        path: path.to_path_buf(),
+        language,
+        backend: "lsp".to_string(),
+        tool: "clangd".to_string(),
+        severity: lsp_diagnostic_severity(raw.get("severity").and_then(Value::as_u64)),
+        code,
+        message: raw.get("message")?.as_str()?.to_string(),
+        start_line: lsp_position(range.pointer("/start/line").and_then(Value::as_u64)),
+        start_column: lsp_position(range.pointer("/start/character").and_then(Value::as_u64)),
+        end_line: lsp_position(range.pointer("/end/line").and_then(Value::as_u64)),
+        end_column: lsp_position(range.pointer("/end/character").and_then(Value::as_u64)),
+        related: related_lsp_diagnostics(raw),
+    })
+}
+
+fn related_lsp_diagnostics(raw: &Value) -> Vec<RelatedDiagnostic> {
+    let Some(related) = raw.get("relatedInformation").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    related
+        .iter()
+        .filter_map(|item| {
+            let location = item.get("location")?;
+            let path = path_from_uri(location.get("uri")?.as_str()?)?;
+            let range = location.get("range")?;
+            Some(RelatedDiagnostic {
+                path,
+                message: item
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                start_line: lsp_position(range.pointer("/start/line").and_then(Value::as_u64)),
+                start_column: lsp_position(
+                    range.pointer("/start/character").and_then(Value::as_u64),
+                ),
+            })
+        })
+        .collect()
+}
+
+fn lsp_diagnostic_severity(value: Option<u64>) -> DiagnosticSeverity {
+    match value {
+        Some(1) => DiagnosticSeverity::Error,
+        Some(2) => DiagnosticSeverity::Warning,
+        Some(3) => DiagnosticSeverity::Info,
+        Some(4) => DiagnosticSeverity::Hint,
+        _ => DiagnosticSeverity::Info,
+    }
+}
+
+fn lsp_position(value: Option<u64>) -> usize {
+    value.unwrap_or(0) as usize + 1
 }
 
 fn lsp_kind(kind: u64) -> Option<SymbolKind> {

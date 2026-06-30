@@ -29,6 +29,13 @@ codescope extract-section --name Usage.Installation --path README.md
 codescope references --name parse_config --path src
 codescope callers --name parse_config --path src
 codescope context --name parse_config --path src
+codescope diagnostics --path .
+codescope diagnostics --tool cargo --json --path .
+codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
+codescope diagnostics --tool ruff --path .
+codescope diagnostics --tool mypy --path .
+codescope diagnostics --tool pyright --path .
+codescope diagnostics --tool cmake --path .
 codescope replace-text --find "old" --replace "new" --path src --preview
 codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path src --preview
 codescope replace --name OldSymbol --with NewSymbol --kind function --path src --preview
@@ -47,6 +54,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - C-family symbol, reference, and caller discovery uses clangd in `--backend auto` when available, with tree-sitter or lexical fallback.
 - Use `--backend lsp` to require semantic C-family results, and pass `--compile-commands-dir` when the project has a non-default compilation database.
 - Use `--root` when the clangd project root differs from the search `--path`.
+- Use `diagnostics` to see normalized compiler or LSP errors before and after edits. Auto mode runs available relevant sources; explicit `--tool cargo` runs `cargo check --message-format=json`; explicit `--tool clangd --backend lsp` collects C-family diagnostics through clangd; Python projects can use `--tool ruff`, `--tool mypy`, or `--tool pyright`; CMake projects can use `--tool cmake` for configure/build diagnostics.
 - CMake extraction covers `CMakeLists.txt` and `*.cmake` files with `--lang cmake`.
 - CMake variables include full `set(...)`, `option(...)`, `unset(...)`, and mutating `list(...)` commands.
 - CMake blocks include matched `if`, `foreach`, `function`, `macro`, and `while` regions; `extract-block --name NAME` may match the command name, full header, or an argument token.
@@ -62,7 +70,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - Use `replace --kind function|class|struct|enum|variable|target|block|heading` or `rename-symbol --kind ...` when a symbol should be verified before rewriting identifier-boundary matches.
 - Use `rewrite-import` for Python import/module path changes.
 - Use `rewrite-markdown` for Markdown heading text or link target rewrites.
-- Use `--json` when stable fields are needed: `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`.
+- Use `--json` when stable fields are needed. Symbol records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`; diagnostic records include `path`, `language`, `backend`, `tool`, `severity`, `code`, `message`, start/end line and column fields, and `related`. Explicit diagnostics tool failures are emitted as `backend-error` records and exit with code `3`.
 
 ## Agent Workflow
 
@@ -77,5 +85,6 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 9. Use `codescope extract-section` for focused Markdown documentation context.
 10. Use `codescope references` or `codescope callers` before opening broad call-site regions.
 11. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
-12. Use edit commands with `--preview` first, use `--apply` to write files or `--confirm` with `--apply` to require a clean Git worktree before editing.
-13. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.
+12. Use `codescope diagnostics --path .` before or after edits when compiler or IDE squiggles would change the next step.
+13. Use edit commands with `--preview` first, use `--apply` to write files or `--confirm` with `--apply` to require a clean Git worktree before editing.
+14. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.

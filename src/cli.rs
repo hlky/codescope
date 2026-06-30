@@ -5,6 +5,7 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 
 use crate::context::add_import_context;
+use crate::diagnostics::{DiagnosticOptions, DiagnosticRecord, DiagnosticTool};
 use crate::lsp::ClangdOptions;
 use crate::model::{Backend, Language, Symbol, SymbolKindFilter};
 use crate::replace::{Pattern, ReplaceOptions, Replacement};
@@ -44,6 +45,7 @@ enum Command {
     RenameSymbol(RenameSymbolArgs),
     RewriteImport(RewriteImportArgs),
     RewriteMarkdown(RewriteMarkdownArgs),
+    Diagnostics(DiagnosticsArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -221,6 +223,28 @@ struct RewriteMarkdownArgs {
     link_to: Option<String>,
 }
 
+#[derive(Args, Clone, Debug)]
+struct DiagnosticsArgs {
+    #[arg(long, default_value = ".")]
+    path: PathBuf,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    root: Option<PathBuf>,
+    #[arg(long, value_enum)]
+    lang: Option<crate::model::LanguageFilter>,
+    #[arg(long, value_enum, default_value_t = Backend::Auto)]
+    backend: Backend,
+    #[arg(long)]
+    compile_commands_dir: Option<PathBuf>,
+    #[arg(long, value_enum, default_value_t = DiagnosticTool::Auto)]
+    tool: DiagnosticTool,
+    #[arg(long)]
+    json: bool,
+    #[arg(long, default_value_t = 20)]
+    max_matches: usize,
+}
+
 pub fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -266,6 +290,31 @@ pub fn run() -> ExitCode {
             println!("{}", crate::replace::render(&summary));
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::Diagnostics {
+            records,
+            json,
+            backend_failed,
+        }) => {
+            if records.is_empty() {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            let rendered = if json {
+                match serde_json::to_string_pretty(&records) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                crate::diagnostics::render_plain(&records)
+            };
+            println!("{rendered}");
+            if backend_failed {
+                return ExitCode::from(EXIT_BACKEND);
+            }
+            ExitCode::from(EXIT_FOUND)
+        }
         Err(AppError::Config(error)) => {
             eprintln!("{error:#}");
             ExitCode::from(EXIT_CONFIG)
@@ -284,6 +333,11 @@ enum RunOutput {
         source_output: bool,
     },
     Replace(crate::replace::ReplaceSummary),
+    Diagnostics {
+        records: Vec<DiagnosticRecord>,
+        json: bool,
+        backend_failed: bool,
+    },
 }
 
 fn symbols_output(symbols: Vec<Symbol>, json: bool, source_output: bool) -> RunOutput {
@@ -456,7 +510,27 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
             },
         ),
         Command::RewriteMarkdown(args) => run_markdown_rewrite(args),
+        Command::Diagnostics(args) => run_diagnostics(args),
     }
+}
+
+fn run_diagnostics(args: DiagnosticsArgs) -> Result<RunOutput, AppError> {
+    let run = crate::diagnostics::collect(&DiagnosticOptions {
+        path: args.path,
+        file: args.file,
+        root: args.root,
+        lang: args.lang,
+        backend: args.backend,
+        compile_commands_dir: args.compile_commands_dir,
+        tool: args.tool,
+        max_matches: args.max_matches,
+    })
+    .map_err(AppError::Backend)?;
+    Ok(RunOutput::Diagnostics {
+        records: run.records,
+        json: args.json,
+        backend_failed: run.backend_failed,
+    })
 }
 
 fn run_replacement(

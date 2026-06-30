@@ -18,6 +18,13 @@ codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
 codescope context --name foo --path .
+codescope diagnostics --path .
+codescope diagnostics --tool cargo --json --path .
+codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
+codescope diagnostics --tool ruff --path .
+codescope diagnostics --tool mypy --path .
+codescope diagnostics --tool pyright --path .
+codescope diagnostics --tool cmake --path .
 codescope replace-text --find "old" --replace "new" --path . --preview
 codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path . --preview
 codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
@@ -27,13 +34,14 @@ codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" -
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
 - Python structural parsing via tree-sitter.
 - C-family semantic symbols/references via clangd LSP when available.
 - C-family structural fallback via tree-sitter and lexical scanning.
+- Normalized diagnostics from `cargo check --message-format=json`, clangd LSP, Ruff, mypy, Pyright, and CMake configure/build output.
 - CMake variables, command blocks, narrowed block selection, targets, and references via lexical scanning.
 - Markdown headings and sections via tree-sitter.
 - Previewable, diff-aware edit operations for literal text, regexes, symbols, import/module paths, and Markdown headings/links.
@@ -111,3 +119,23 @@ Use `--json` for stable machine-readable records:
   "source": "..."
 }
 ```
+
+Diagnostics records use a separate normalized shape:
+
+```json
+{
+  "path": "src/lib.rs",
+  "language": "rust",
+  "backend": "cargo",
+  "tool": "cargo",
+  "severity": "error",
+  "code": "E0425",
+  "message": "cannot find value `missing` in this scope",
+  "start_line": 1,
+  "start_column": 16,
+  "end_line": 1,
+  "end_column": 23
+}
+```
+
+Explicit diagnostics tool failures, including missing tools and timeouts, are emitted as `backend-error` records and exit with code `3`.

@@ -2,6 +2,7 @@ pub mod cfamily;
 pub mod cli;
 pub mod cmake;
 pub mod context;
+pub mod diagnostics;
 pub mod lsp;
 pub mod markdown;
 pub mod model;

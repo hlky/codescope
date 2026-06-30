@@ -333,6 +333,205 @@ fn rewrite_markdown_updates_headings_and_links() {
 }
 
 #[test]
+fn diagnostics_cargo_json_emits_normalized_records() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"bad_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("src").join("lib.rs"),
+        "pub fn bad() { missing }\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["diagnostics", "--tool", "cargo", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""language": "rust""#))
+        .stdout(predicate::str::contains(r#""tool": "cargo""#))
+        .stdout(predicate::str::contains(r#""severity": "error""#))
+        .stdout(predicate::str::contains("cannot find value"));
+}
+
+#[test]
+fn diagnostics_auto_uses_available_cargo_source() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"bad_auto_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("src").join("lib.rs"),
+        "pub fn bad() { missing }\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["diagnostics", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cargo"))
+        .stdout(predicate::str::contains("cannot find value"));
+}
+
+#[test]
+fn diagnostics_explicit_clangd_reports_backend_failure_when_missing() {
+    let dir = fixture();
+    let mut command = Command::cargo_bin("codescope").unwrap();
+    command.env("PATH", "");
+    command
+        .args([
+            "diagnostics",
+            "--tool",
+            "clangd",
+            "--backend",
+            "lsp",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn diagnostics_clangd_reports_content_when_available() {
+    if which::which("clangd").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("bad.cpp"),
+        "int main() { return missing; }\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "diagnostics",
+            "--tool",
+            "clangd",
+            "--backend",
+            "lsp",
+            "--lang",
+            "cpp",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""tool": "clangd""#))
+        .stdout(predicate::str::contains("missing"));
+}
+
+#[test]
+fn diagnostics_ruff_runs_when_available() {
+    if which::which("ruff").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("bad.py"), "print(missing)\n").unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["diagnostics", "--tool", "ruff", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""tool": "ruff""#))
+        .stdout(predicate::str::contains("F821"));
+}
+
+#[test]
+fn diagnostics_mypy_runs_when_available() {
+    if which::which("mypy").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("bad.py"),
+        "def bad() -> int:\n    return 'text'\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["diagnostics", "--tool", "mypy", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""tool": "mypy""#))
+        .stdout(predicate::str::contains("return-value"));
+}
+
+#[test]
+fn diagnostics_pyright_runs_when_available() {
+    if which::which("pyright").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("bad.py"), "print(missing)\n").unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["diagnostics", "--tool", "pyright", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""tool": "pyright""#))
+        .stdout(predicate::str::contains("reportUndefinedVariable"));
+}
+
+#[test]
+fn diagnostics_cmake_runs_when_available() {
+    if which::which("cmake").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("CMakeLists.txt"),
+        "cmake_minimum_required(VERSION 3.20)\nproject(Bad)\nbad_command()\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["diagnostics", "--tool", "cmake", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""tool": "cmake""#))
+        .stdout(predicate::str::contains("bad_command"));
+}
+
+#[test]
+fn diagnostics_explicit_missing_tool_outputs_json_backend_error() {
+    let dir = fixture();
+    let mut command = Command::cargo_bin("codescope").unwrap();
+    command.env("PATH", "");
+    command
+        .args(["diagnostics", "--tool", "pyright", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .code(3)
+        .stdout(predicate::str::contains(r#""code": "backend-error""#))
+        .stdout(predicate::str::contains(r#""tool": "pyright""#));
+}
+
+#[test]
 fn tree_sitter_cfamily_qualified_names_include_scope() {
     let dir = fixture();
     Command::cargo_bin("codescope")

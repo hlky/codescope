@@ -7,6 +7,7 @@ use serde::Serialize;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum LanguageFilter {
     Python,
+    Rust,
     C,
     Cpp,
     #[value(alias = "c++")]
@@ -21,6 +22,7 @@ pub enum LanguageFilter {
 #[serde(rename_all = "lowercase")]
 pub enum Language {
     Python,
+    Rust,
     C,
     Cpp,
     Cuda,
@@ -34,6 +36,7 @@ impl fmt::Display for Language {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::Python => "python",
+            Self::Rust => "rust",
             Self::C => "c",
             Self::Cpp => "cpp",
             Self::Cuda => "cuda",

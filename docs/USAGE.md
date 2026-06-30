@@ -18,6 +18,9 @@ codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
 codescope context --name foo --path .
+codescope diagnostics --path .
+codescope diagnostics --tool cargo --json --path .
+codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
 codescope replace-text --find "old" --replace "new" --path . --preview
 codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path . --preview
 codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
@@ -36,6 +39,27 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - `--backend auto|lsp|tree-sitter|lexical`: choose backend behavior.
 - `--root PATH`: set project root for clangd.
 - `--compile-commands-dir PATH`: pass a compilation database directory to clangd.
+
+## Diagnostics
+
+`diagnostics` emits IDE-style errors and warnings as normalized records:
+
+```bash
+codescope diagnostics --path .
+codescope diagnostics --file src/foo.cpp --json
+codescope diagnostics --tool cargo --json --path .
+codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
+codescope diagnostics --tool ruff --path .
+codescope diagnostics --tool mypy --path .
+codescope diagnostics --tool pyright --path .
+codescope diagnostics --tool cmake --path .
+```
+
+Auto mode runs available relevant sources deterministically: Rust projects use `cargo check --message-format=json`; C-family files use clangd when available; Python files use available Ruff, mypy, and Pyright; CMake projects use `cmake -S/-B` plus `cmake --build` in a temporary build directory. Missing tools are skipped in auto mode. Explicit tool mode emits a `backend-error` diagnostic and exits with code `3` when the selected backend cannot run or times out.
+
+Plain output is grouped by file. JSON diagnostics include `path`, `language`, `backend`, `tool`, `severity`, optional `code`, `message`, `start_line`, `start_column`, `end_line`, `end_column`, and optional `related` entries.
+
+Each external diagnostics command has a 30 second timeout. CMake configure/build diagnostics parse CMake error/warning records plus common GCC/Clang and MSVC compiler diagnostics from build output.
 
 ## Edit Flags
 
