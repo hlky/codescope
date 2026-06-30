@@ -5,11 +5,12 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
 
 use crate::context::add_import_context;
+use crate::context_pack::{ContextPack, ContextPackItem};
 use crate::diagnostics::{DiagnosticOptions, DiagnosticRecord, DiagnosticTool};
 use crate::lsp::ClangdOptions;
 use crate::model::{Backend, Language, Symbol, SymbolKindFilter};
 use crate::replace::{Pattern, ReplaceOptions, Replacement};
-use crate::workspace::{language_for_path, read_text, source_files};
+use crate::workspace::{language_for_path, line_slice, read_text, source_files};
 
 const EXIT_FOUND: u8 = 0;
 const EXIT_NO_MATCH: u8 = 1;
@@ -39,6 +40,7 @@ enum Command {
     References(NamedArgs),
     Callers(NamedArgs),
     Context(ContextArgs),
+    ContextPack(ContextPackArgs),
     ReplaceText(ReplaceTextArgs),
     ReplaceRegex(ReplaceRegexArgs),
     Replace(ReplaceSymbolArgs),
@@ -133,6 +135,22 @@ struct ContextArgs {
     name: String,
     #[arg(long, value_enum, default_value_t = SymbolKindFilter::All)]
     kind: SymbolKindFilter,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ContextPackArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    around_line: Option<usize>,
+    #[arg(long, default_value_t = 8000)]
+    budget: usize,
+    #[arg(long)]
+    intent: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -315,6 +333,24 @@ pub fn run() -> ExitCode {
             }
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::ContextPack { pack, json }) => {
+            if pack.items.is_empty() {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            let rendered = if json {
+                match serde_json::to_string_pretty(&pack) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                crate::context_pack::render_plain(&pack)
+            };
+            println!("{rendered}");
+            ExitCode::from(EXIT_FOUND)
+        }
         Err(AppError::Config(error)) => {
             eprintln!("{error:#}");
             ExitCode::from(EXIT_CONFIG)
@@ -337,6 +373,10 @@ enum RunOutput {
         records: Vec<DiagnosticRecord>,
         json: bool,
         backend_failed: bool,
+    },
+    ContextPack {
+        pack: ContextPack,
+        json: bool,
     },
 }
 
@@ -476,6 +516,7 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
             symbols.truncate(args.common.max_matches);
             Ok(symbols_output(symbols, args.common.json, true))
         }
+        Command::ContextPack(args) => run_context_pack(args),
         Command::ReplaceText(args) => run_replacement(
             &args.common,
             Replacement {
@@ -511,6 +552,358 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
         ),
         Command::RewriteMarkdown(args) => run_markdown_rewrite(args),
         Command::Diagnostics(args) => run_diagnostics(args),
+    }
+}
+
+fn run_context_pack(args: ContextPackArgs) -> Result<RunOutput, AppError> {
+    let subject = context_pack_subject(&args)?;
+    let mut pack = ContextPack::new(subject.clone(), args.budget);
+    if let Some(intent) = &args.intent {
+        pack.notes.push(format!("intent: {intent}"));
+    }
+
+    let primary = if let Some(name) = &args.name {
+        let mut common = args.common.clone();
+        common.max_matches = common.max_matches.max(1);
+        collect_symbols(&common, None, Some(name))?
+    } else {
+        collect_enclosing_symbols(&args.common, args.file.as_ref(), args.around_line)?
+    };
+
+    if primary.is_empty() {
+        pack.notes
+            .push("no primary definition or enclosing symbol matched".to_string());
+        return Ok(RunOutput::ContextPack {
+            pack,
+            json: args.common.json,
+        });
+    }
+
+    for symbol in primary.iter().cloned() {
+        let role = if args.name.is_some() {
+            "definition"
+        } else {
+            "enclosing-symbol"
+        };
+        pack.push_symbol(role, symbol, 1000, "primary match");
+    }
+    add_import_items(&mut pack, &primary);
+
+    if let Some(name) = &args.name {
+        collect_named_context(&mut pack, &args.common, name, &primary);
+    }
+
+    collect_related_tests(&mut pack, &args.common, args.name.as_deref(), &primary);
+    collect_related_docs(&mut pack, &args.common, args.name.as_deref());
+    collect_related_diagnostics(&mut pack, &args.common, args.name.as_deref(), &primary);
+
+    pack.rank_dedupe_and_truncate();
+    Ok(RunOutput::ContextPack {
+        pack,
+        json: args.common.json,
+    })
+}
+
+fn context_pack_subject(args: &ContextPackArgs) -> Result<String, AppError> {
+    match (&args.name, &args.file, args.around_line) {
+        (Some(name), None, None) => Ok(name.clone()),
+        (Some(name), None, Some(_)) => Ok(name.clone()),
+        (None, Some(file), Some(line)) => Ok(format!("{} around line {line}", file.display())),
+        (Some(_), Some(_), _) => Err(AppError::Config(anyhow::anyhow!(
+            "context-pack accepts either --name or --file, not both"
+        ))),
+        (None, Some(_), None) => Err(AppError::Config(anyhow::anyhow!(
+            "context-pack --file requires --around-line"
+        ))),
+        (None, None, _) => Err(AppError::Config(anyhow::anyhow!(
+            "context-pack requires --name or --file --around-line"
+        ))),
+    }
+}
+
+fn collect_enclosing_symbols(
+    common: &CommonArgs,
+    file: Option<&PathBuf>,
+    around_line: Option<usize>,
+) -> Result<Vec<Symbol>, AppError> {
+    let Some(file) = file else {
+        return Ok(Vec::new());
+    };
+    let Some(line) = around_line else {
+        return Ok(Vec::new());
+    };
+    let base = common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
+        .map_err(AppError::Config)?;
+    let file = if file.is_absolute() {
+        file.clone()
+    } else {
+        base.join(file)
+    }
+    .canonicalize()
+    .with_context(|| format!("failed to resolve --file {}", file.display()))
+    .map_err(AppError::Config)?;
+    let mut file_common = common.clone();
+    file_common.path = file;
+    file_common.max_matches = usize::MAX;
+    let mut symbols = collect_symbols(&file_common, None, None)?;
+    symbols.retain(|symbol| symbol.start_line <= line && line <= symbol.end_line);
+    symbols.sort_by_key(|symbol| {
+        (
+            symbol.end_line.saturating_sub(symbol.start_line),
+            symbol.start_line,
+        )
+    });
+    symbols.truncate(common.max_matches);
+    Ok(symbols)
+}
+
+fn add_import_items(pack: &mut ContextPack, symbols: &[Symbol]) {
+    for symbol in symbols {
+        let Some(text) = read_text(&symbol.path) else {
+            continue;
+        };
+        let Some((start_line, end_line, source)) =
+            crate::context::import_context_range(symbol.language, &text)
+        else {
+            continue;
+        };
+        pack.push(ContextPackItem::synthetic(
+            "imports",
+            symbol.path.clone(),
+            start_line,
+            end_line,
+            symbol.language,
+            symbol.backend.clone(),
+            900,
+            "imports/includes for primary item",
+            source,
+        ));
+    }
+}
+
+fn collect_named_context(
+    pack: &mut ContextPack,
+    common: &CommonArgs,
+    name: &str,
+    primary: &[Symbol],
+) {
+    match collect_callers(common, name) {
+        Ok(callers) => {
+            for caller in callers {
+                pack.push_symbol("caller", caller, 800, "direct caller");
+            }
+        }
+        Err(error) => pack.notes.push(format!(
+            "caller collection failed: {}",
+            app_error_note(error)
+        )),
+    }
+    match collect_references(common, name) {
+        Ok(references) => {
+            for reference in references {
+                if primary.iter().any(|symbol| same_range(symbol, &reference)) {
+                    continue;
+                }
+                pack.push_symbol("reference", reference, 700, "direct reference");
+            }
+        }
+        Err(error) => pack.notes.push(format!(
+            "reference collection failed: {}",
+            app_error_note(error)
+        )),
+    }
+    let mut cmake_common = common.clone();
+    cmake_common.lang = Some(crate::model::LanguageFilter::Cmake);
+    if let Ok(symbols) = collect_symbols(&cmake_common, Some(SymbolKindFilter::Target), Some(name))
+    {
+        for symbol in symbols {
+            pack.push_symbol("build", symbol, 550, "matching CMake target");
+        }
+    }
+    if let Ok(references) = collect_references(&cmake_common, name) {
+        for reference in references {
+            pack.push_symbol("build", reference, 540, "CMake reference");
+        }
+    }
+}
+
+fn collect_related_tests(
+    pack: &mut ContextPack,
+    common: &CommonArgs,
+    name: Option<&str>,
+    primary: &[Symbol],
+) {
+    let Some(name) = name else {
+        return;
+    };
+    let Ok(root) = common.path.canonicalize() else {
+        return;
+    };
+    let needle = name
+        .replace("::", ".")
+        .rsplit('.')
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    for file in source_files(&root, common.lang) {
+        if !is_test_path(&file) {
+            continue;
+        }
+        let Some(text) = read_text(&file) else {
+            continue;
+        };
+        if !text.to_ascii_lowercase().contains(&needle) {
+            continue;
+        }
+        let line = first_matching_line(&text, &needle).unwrap_or(1);
+        let start = line.saturating_sub(3).max(1);
+        let end = line + 6;
+        let language = language_for_path(&file).unwrap_or(Language::Text);
+        pack.push(ContextPackItem::synthetic(
+            "test",
+            file,
+            start,
+            end,
+            language,
+            "lexical",
+            if primary.iter().any(|symbol| symbol.language == language) {
+                650
+            } else {
+                600
+            },
+            "nearby test mention",
+            line_slice(&text, start, end),
+        ));
+    }
+}
+
+fn collect_related_docs(pack: &mut ContextPack, common: &CommonArgs, name: Option<&str>) {
+    let Some(name) = name else {
+        return;
+    };
+    let Ok(root) = common.path.canonicalize() else {
+        return;
+    };
+    let needle = name
+        .replace("::", ".")
+        .rsplit('.')
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase();
+    for file in source_files(&root, Some(crate::model::LanguageFilter::Markdown)) {
+        let Some(text) = read_text(&file) else {
+            continue;
+        };
+        if !text.to_ascii_lowercase().contains(&needle) {
+            continue;
+        }
+        let line = first_matching_line(&text, &needle).unwrap_or(1);
+        let start = line.saturating_sub(3).max(1);
+        let end = line + 8;
+        pack.push(ContextPackItem::synthetic(
+            "docs",
+            file,
+            start,
+            end,
+            Language::Markdown,
+            "lexical",
+            500,
+            "documentation mention",
+            line_slice(&text, start, end),
+        ));
+    }
+}
+
+fn collect_related_diagnostics(
+    pack: &mut ContextPack,
+    common: &CommonArgs,
+    name: Option<&str>,
+    primary: &[Symbol],
+) {
+    let run = match crate::diagnostics::collect(&DiagnosticOptions {
+        path: common.path.clone(),
+        file: None,
+        root: common.root.clone(),
+        lang: common.lang,
+        backend: common.backend,
+        compile_commands_dir: common.compile_commands_dir.clone(),
+        tool: DiagnosticTool::Auto,
+        max_matches: 20,
+    }) {
+        Ok(run) => run,
+        Err(error) => {
+            pack.notes
+                .push(format!("diagnostic collection failed: {error:#}"));
+            return;
+        }
+    };
+    let needle = name.map(str::to_ascii_lowercase);
+    for record in run.records {
+        let touches_primary = primary.iter().any(|symbol| {
+            symbol.path == record.path
+                && ranges_overlap(
+                    symbol.start_line,
+                    symbol.end_line,
+                    record.start_line,
+                    record.end_line,
+                )
+        });
+        let mentions_name = needle
+            .as_ref()
+            .is_some_and(|needle| record.message.to_ascii_lowercase().contains(needle));
+        if !touches_primary && !mentions_name {
+            continue;
+        }
+        pack.push(ContextPackItem::synthetic(
+            "diagnostic",
+            record.path,
+            record.start_line,
+            record.end_line,
+            record.language,
+            record.backend,
+            450,
+            format!("{} {}", record.tool, record.severity),
+            record.message,
+        ));
+    }
+}
+
+fn same_range(left: &Symbol, right: &Symbol) -> bool {
+    left.path == right.path
+        && left.start_line == right.start_line
+        && left.end_line == right.end_line
+}
+
+fn ranges_overlap(
+    left_start: usize,
+    left_end: usize,
+    right_start: usize,
+    right_end: usize,
+) -> bool {
+    left_start <= right_end && right_start <= left_end
+}
+
+fn is_test_path(path: &std::path::Path) -> bool {
+    path.components().any(|part| {
+        let value = part.as_os_str().to_string_lossy().to_ascii_lowercase();
+        value == "tests" || value == "test"
+    }) || path
+        .file_stem()
+        .is_some_and(|stem| stem.to_string_lossy().to_ascii_lowercase().contains("test"))
+}
+
+fn first_matching_line(text: &str, needle: &str) -> Option<usize> {
+    text.lines()
+        .position(|line| line.to_ascii_lowercase().contains(needle))
+        .map(|idx| idx + 1)
+}
+
+fn app_error_note(error: AppError) -> String {
+    match error {
+        AppError::Config(error) | AppError::Backend(error) => format!("{error:#}"),
     }
 }
 

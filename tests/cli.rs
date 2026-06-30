@@ -65,6 +65,8 @@ int GLOBAL_COUNT = 7;
 # Project
 overview
 
+The helper function is used by Widget.build and caller.
+
 ```markdown
 ## Not a heading
 ```
@@ -77,6 +79,18 @@ more
 
 ## API
 reference
+"#
+        .trim_start(),
+    )
+    .unwrap();
+    std::fs::create_dir(dir.path().join("tests")).unwrap();
+    std::fs::write(
+        dir.path().join("tests").join("test_sample.py"),
+        r#"
+from sample import helper
+
+def test_helper():
+    assert helper() == 1
 "#
         .trim_start(),
     )
@@ -935,6 +949,122 @@ fn context_includes_imports() {
         .success()
         .stdout(predicate::str::contains("import os"))
         .stdout(predicate::str::contains("def helper"));
+}
+
+#[test]
+fn context_pack_ranks_definition_imports_callers_and_references() {
+    let dir = fixture();
+    let output = Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "helper",
+            "--lang",
+            "python",
+            "--path",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let definition = stdout.find("## definition").unwrap();
+    let imports = stdout.find("## imports").unwrap();
+    let caller = stdout.find("## caller").unwrap();
+    let reference = stdout.find("## reference").unwrap();
+    assert!(definition < imports);
+    assert!(imports < caller);
+    assert!(caller < reference);
+    assert!(stdout.contains("import os"));
+    assert!(stdout.contains("def helper"));
+}
+
+#[test]
+fn context_pack_budget_omits_lower_ranked_items() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "helper",
+            "--lang",
+            "python",
+            "--budget",
+            "80",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## definition"))
+        .stdout(predicate::str::contains("## imports"))
+        .stdout(predicate::str::contains("## Omitted"))
+        .stdout(predicate::str::contains("caller"));
+}
+
+#[test]
+fn context_pack_json_has_stable_roles() {
+    let dir = fixture();
+    let output = Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "helper",
+            "--lang",
+            "python",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let roles = value["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["role"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(roles.first().copied(), Some("definition"));
+    assert!(roles.contains(&"imports"));
+    assert!(roles.contains(&"caller"));
+    assert!(roles.contains(&"reference"));
+}
+
+#[test]
+fn context_pack_file_around_line_uses_enclosing_symbol() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "context-pack",
+            "--backend",
+            "tree-sitter",
+            "--file",
+            "sample.py",
+            "--around-line",
+            "16",
+            "--lang",
+            "python",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("## enclosing-symbol"))
+        .stdout(predicate::str::contains("def caller"));
 }
 
 #[test]

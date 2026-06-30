@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.9 - 2026-06-30
+
+- Added `context-pack` for ranked symbol or line-based editing context with JSON output, budget-based whole-item omission, tests/docs/build/diagnostics hooks, and skill guidance.
+
 ## v0.1.8 - 2026-06-30
 
 - Fixed diagnostics tool timeout handling to drain child process output while waiting, avoiding blocked cargo/other verbose diagnostics runs.

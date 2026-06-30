@@ -18,6 +18,8 @@ codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
 codescope context --name foo --path .
+codescope context-pack --name foo --path .
+codescope context-pack --file src/foo.py --around-line 80 --path .
 codescope diagnostics --path .
 codescope diagnostics --tool cargo --json --path .
 codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
@@ -39,6 +41,20 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - `--backend auto|lsp|tree-sitter|lexical`: choose backend behavior.
 - `--root PATH`: set project root for clangd.
 - `--compile-commands-dir PATH`: pass a compilation database directory to clangd.
+
+## Context Packs
+
+`context-pack` returns ranked context for an agent preparing to edit a symbol or a line in a file:
+
+```bash
+codescope context-pack --name Foo --path .
+codescope context-pack --file src/foo.py --around-line 80 --path .
+codescope context-pack --name Foo --budget 2000 --intent fix-bug --json --path .
+```
+
+For `--name`, the pack starts with matching definitions, then imports/includes, direct callers, references, related tests, docs, CMake build metadata, and diagnostics when available. For `--file --around-line`, the pack starts with the smallest symbol enclosing that line. `--budget` is an approximate source-character budget; lower-ranked items are omitted whole and reported under `omitted`.
+
+Plain output groups each ranked item by role. JSON output includes `subject`, `budget`, `items`, `omitted`, and `notes`; each item includes `role`, `path`, `start_line`, `end_line`, `language`, `backend`, `score`, `reason`, and `source`.
 
 ## Diagnostics
 
