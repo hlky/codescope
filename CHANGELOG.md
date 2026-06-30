@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.5 - 2026-06-30
+
+- Fixed `--help` and `--version` to exit successfully after printing display output.
+
 ## v0.1.4 - 2026-06-30
 
 - Added previewable, diff-aware edit commands for literal text replacement, regex replacement, symbol renames, import/module path rewrites, and Markdown heading/link rewrites.

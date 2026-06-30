@@ -122,6 +122,16 @@ endforeach()
 }
 
 #[test]
+fn version_exits_successfully() {
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("codescope"));
+}
+
+#[test]
 fn replace_text_previews_diff_without_modifying_files() {
     let dir = fixture();
     let file = dir.path().join("sample.py");

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, error::ErrorKind};
 
 use crate::context::add_import_context;
 use crate::lsp::ClangdOptions;
@@ -225,8 +225,12 @@ pub fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {
+            let exit = match error.kind() {
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => EXIT_FOUND,
+                _ => EXIT_CONFIG,
+            };
             let _ = error.print();
-            return ExitCode::from(EXIT_CONFIG);
+            return ExitCode::from(exit);
         }
     };
 
