@@ -18,6 +18,13 @@ codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
 codescope context --name foo --path .
+codescope replace-text --find "old" --replace "new" --path . --preview
+codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path . --preview
+codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
+codescope rename-symbol --from Foo --to Bar --path . --preview
+codescope rewrite-import --from old.module --to new.module --path . --preview
+codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
+codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
 The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
@@ -29,6 +36,7 @@ Current implementation:
 - C-family structural fallback via tree-sitter and lexical scanning.
 - CMake variables, command blocks, narrowed block selection, targets, and references via lexical scanning.
 - Markdown headings and sections via tree-sitter.
+- Previewable, diff-aware edit operations for literal text, regexes, symbols, import/module paths, and Markdown headings/links.
 - Codex skill packaging in `skill/SKILL.md`.
 
 See [docs/USAGE.md](docs/USAGE.md) for command details.
@@ -55,6 +63,8 @@ The install script copies `codescope.exe` into `%USERPROFILE%\.codex\bin` and in
 - `1`: no matches
 - `2`: CLI or configuration error
 - `3`: explicitly required backend failed
+
+Edit commands default to preview mode. Add `--apply` to write changes, and add `--confirm` with `--apply` to require a clean Git worktree before writing so changes can be undone through Git. All edit commands support `--include`, `--exclude`, `--lang`, and `--max-files`.
 
 ## JSON Output
 

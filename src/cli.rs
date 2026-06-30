@@ -7,6 +7,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::context::add_import_context;
 use crate::lsp::ClangdOptions;
 use crate::model::{Backend, Language, Symbol, SymbolKindFilter};
+use crate::replace::{Pattern, ReplaceOptions, Replacement};
 use crate::workspace::{language_for_path, read_text, source_files};
 
 const EXIT_FOUND: u8 = 0;
@@ -37,6 +38,12 @@ enum Command {
     References(NamedArgs),
     Callers(NamedArgs),
     Context(ContextArgs),
+    ReplaceText(ReplaceTextArgs),
+    ReplaceRegex(ReplaceRegexArgs),
+    Replace(ReplaceSymbolArgs),
+    RenameSymbol(RenameSymbolArgs),
+    RewriteImport(RewriteImportArgs),
+    RewriteMarkdown(RewriteMarkdownArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -126,6 +133,94 @@ struct ContextArgs {
     kind: SymbolKindFilter,
 }
 
+#[derive(Args, Clone, Debug)]
+struct EditCommonArgs {
+    #[arg(long, default_value = ".")]
+    path: PathBuf,
+    #[arg(long, value_enum)]
+    lang: Option<crate::model::LanguageFilter>,
+    #[arg(long)]
+    preview: bool,
+    #[arg(long, conflicts_with = "preview")]
+    apply: bool,
+    #[arg(long)]
+    include: Vec<String>,
+    #[arg(long)]
+    exclude: Vec<String>,
+    #[arg(long, default_value_t = 50)]
+    max_files: usize,
+    #[arg(long)]
+    confirm: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ReplaceTextArgs {
+    #[command(flatten)]
+    common: EditCommonArgs,
+    #[arg(long)]
+    find: String,
+    #[arg(long)]
+    replace: String,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ReplaceRegexArgs {
+    #[command(flatten)]
+    common: EditCommonArgs,
+    #[arg(long)]
+    find: String,
+    #[arg(long)]
+    replace: String,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ReplaceSymbolArgs {
+    #[command(flatten)]
+    common: EditCommonArgs,
+    #[arg(long)]
+    name: String,
+    #[arg(long = "with")]
+    replacement: String,
+    #[arg(long, value_enum)]
+    kind: Option<SymbolKindFilter>,
+}
+
+#[derive(Args, Clone, Debug)]
+struct RenameSymbolArgs {
+    #[command(flatten)]
+    common: EditCommonArgs,
+    #[arg(long = "from")]
+    from: String,
+    #[arg(long = "to")]
+    to: String,
+    #[arg(long, value_enum)]
+    kind: Option<SymbolKindFilter>,
+}
+
+#[derive(Args, Clone, Debug)]
+struct RewriteImportArgs {
+    #[command(flatten)]
+    common: EditCommonArgs,
+    #[arg(long = "from")]
+    from: String,
+    #[arg(long = "to")]
+    to: String,
+}
+
+#[derive(Args, Clone, Debug)]
+struct RewriteMarkdownArgs {
+    #[command(flatten)]
+    common: EditCommonArgs,
+    #[arg(long = "heading-from")]
+    heading_from: Option<String>,
+    #[arg(long = "heading-to")]
+    heading_to: Option<String>,
+    #[arg(long = "link-from")]
+    link_from: Option<String>,
+    #[arg(long = "link-to")]
+    link_to: Option<String>,
+}
+
 pub fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -136,7 +231,11 @@ pub fn run() -> ExitCode {
     };
 
     match run_inner(cli) {
-        Ok((symbols, json, source_output)) => {
+        Ok(RunOutput::Symbols {
+            symbols,
+            json,
+            source_output,
+        }) => {
             if symbols.is_empty() {
                 return ExitCode::from(EXIT_NO_MATCH);
             }
@@ -156,6 +255,13 @@ pub fn run() -> ExitCode {
             println!("{rendered}");
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::Replace(summary)) => {
+            if summary.replacements == 0 {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            println!("{}", crate::replace::render(&summary));
+            ExitCode::from(EXIT_FOUND)
+        }
         Err(AppError::Config(error)) => {
             eprintln!("{error:#}");
             ExitCode::from(EXIT_CONFIG)
@@ -167,7 +273,24 @@ pub fn run() -> ExitCode {
     }
 }
 
-fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
+enum RunOutput {
+    Symbols {
+        symbols: Vec<Symbol>,
+        json: bool,
+        source_output: bool,
+    },
+    Replace(crate::replace::ReplaceSummary),
+}
+
+fn symbols_output(symbols: Vec<Symbol>, json: bool, source_output: bool) -> RunOutput {
+    RunOutput::Symbols {
+        symbols,
+        json,
+        source_output,
+    }
+}
+
+fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
     match cli.command {
         Command::ListFunctions(args) => {
             let mut symbols =
@@ -186,12 +309,12 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
                 });
             }
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, false))
+            Ok(symbols_output(symbols, args.common.json, false))
         }
         Command::ListHeadings(args) => {
             let mut symbols = collect_markdown_headings(&args.common, args.query.as_deref())?;
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, false))
+            Ok(symbols_output(symbols, args.common.json, false))
         }
         Command::ExtractFunction(args) => {
             let mut symbols = collect_symbols(
@@ -200,12 +323,12 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
                 Some(&args.name),
             )?;
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, true))
+            Ok(symbols_output(symbols, args.common.json, true))
         }
         Command::ExtractSection(args) => {
             let mut symbols = collect_markdown_headings(&args.common, Some(&args.name))?;
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, true))
+            Ok(symbols_output(symbols, args.common.json, true))
         }
         Command::ExtractBlock(args) => {
             let mut broad_common = args.common.clone();
@@ -245,7 +368,7 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
                 symbols.truncate(1);
             }
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, true))
+            Ok(symbols_output(symbols, args.common.json, true))
         }
         Command::ExtractSymbol(args) => {
             let filter = if args.kind == SymbolKindFilter::All {
@@ -255,7 +378,7 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
             };
             let mut symbols = collect_symbols(&args.common, filter, Some(&args.name))?;
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, true))
+            Ok(symbols_output(symbols, args.common.json, true))
         }
         Command::ExtractVariable(args) => {
             let mut symbols = collect_symbols(
@@ -272,17 +395,17 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
                 });
             }
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, true))
+            Ok(symbols_output(symbols, args.common.json, true))
         }
         Command::References(args) => {
             let mut symbols = collect_references(&args.common, &args.name)?;
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, false))
+            Ok(symbols_output(symbols, args.common.json, false))
         }
         Command::Callers(args) => {
             let mut symbols = collect_callers(&args.common, &args.name)?;
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, true))
+            Ok(symbols_output(symbols, args.common.json, true))
         }
         Command::Context(args) => {
             let filter = if args.kind == SymbolKindFilter::All {
@@ -293,9 +416,156 @@ fn run_inner(cli: Cli) -> Result<(Vec<Symbol>, bool, bool), AppError> {
             let symbols = collect_symbols(&args.common, filter, Some(&args.name))?;
             let mut symbols = add_import_context(symbols);
             symbols.truncate(args.common.max_matches);
-            Ok((symbols, args.common.json, true))
+            Ok(symbols_output(symbols, args.common.json, true))
+        }
+        Command::ReplaceText(args) => run_replacement(
+            &args.common,
+            Replacement {
+                pattern: Pattern::Literal(args.find),
+                replacement: args.replace,
+                label: "literal text",
+                expand_captures: false,
+            },
+        ),
+        Command::ReplaceRegex(args) => run_replacement(
+            &args.common,
+            Replacement {
+                pattern: Pattern::Regex(args.find),
+                replacement: args.replace,
+                label: "regex",
+                expand_captures: true,
+            },
+        ),
+        Command::Replace(args) => {
+            run_symbol_replacement(&args.common, &args.name, &args.replacement, args.kind)
+        }
+        Command::RenameSymbol(args) => {
+            run_symbol_replacement(&args.common, &args.from, &args.to, args.kind)
+        }
+        Command::RewriteImport(args) => run_replacement(
+            &import_common(args.common),
+            Replacement {
+                pattern: import_pattern(&args.from)?,
+                replacement: "${1}".to_string() + &args.to + "${2}",
+                label: "import/module path",
+                expand_captures: true,
+            },
+        ),
+        Command::RewriteMarkdown(args) => run_markdown_rewrite(args),
+    }
+}
+
+fn run_replacement(
+    common: &EditCommonArgs,
+    replacement: Replacement,
+) -> Result<RunOutput, AppError> {
+    let summary =
+        crate::replace::run(&replace_options(common), &replacement).map_err(AppError::Config)?;
+    Ok(RunOutput::Replace(summary))
+}
+
+fn run_symbol_replacement(
+    common: &EditCommonArgs,
+    from: &str,
+    to: &str,
+    kind: Option<SymbolKindFilter>,
+) -> Result<RunOutput, AppError> {
+    crate::replace::validate_symbol_request(from, to, kind).map_err(AppError::Config)?;
+    if let Some(kind) = kind {
+        let query = CommonArgs {
+            path: common.path.clone(),
+            root: None,
+            lang: common.lang,
+            backend: Backend::Auto,
+            compile_commands_dir: None,
+            json: false,
+            max_matches: 1,
+        };
+        if collect_symbols(&query, Some(kind), Some(from))?.is_empty() {
+            return Ok(RunOutput::Replace(crate::replace::ReplaceSummary {
+                files_scanned: 0,
+                files_changed: 0,
+                replacements: 0,
+                applied: common.apply,
+                diffs: Vec::new(),
+            }));
         }
     }
+    run_replacement(
+        common,
+        Replacement {
+            pattern: Pattern::Identifier(from.to_string()),
+            replacement: to.to_string(),
+            label: "symbol",
+            expand_captures: false,
+        },
+    )
+}
+
+fn run_markdown_rewrite(args: RewriteMarkdownArgs) -> Result<RunOutput, AppError> {
+    let mut common = args.common;
+    common.lang = Some(crate::model::LanguageFilter::Markdown);
+    let (pattern, replacement, label) = match (
+        args.heading_from,
+        args.heading_to,
+        args.link_from,
+        args.link_to,
+    ) {
+        (Some(from), Some(to), None, None) => (
+            Pattern::Regex(format!(r"(?m)^(#+\s*){}(\s*#*\s*)$", regex::escape(&from))),
+            "${1}".to_string() + &to + "${2}",
+            "markdown heading",
+        ),
+        (None, None, Some(from), Some(to)) => (
+            Pattern::Regex(format!(
+                r"(\[[^\]]+\]\(){}((?:#[^)]+)?\))",
+                regex::escape(&from)
+            )),
+            "${1}".to_string() + &to + "${2}",
+            "markdown link",
+        ),
+        _ => {
+            return Err(AppError::Config(anyhow::anyhow!(
+                "rewrite-markdown requires either --heading-from/--heading-to or --link-from/--link-to"
+            )));
+        }
+    };
+    run_replacement(
+        &common,
+        Replacement {
+            pattern,
+            replacement,
+            label,
+            expand_captures: true,
+        },
+    )
+}
+
+fn replace_options(common: &EditCommonArgs) -> ReplaceOptions {
+    ReplaceOptions {
+        path: common.path.clone(),
+        lang: common.lang,
+        include: common.include.clone(),
+        exclude: common.exclude.clone(),
+        max_files: common.max_files,
+        apply: common.apply,
+        confirm: common.confirm,
+    }
+}
+
+fn import_common(mut common: EditCommonArgs) -> EditCommonArgs {
+    if common.lang.is_none() {
+        common.lang = Some(crate::model::LanguageFilter::Python);
+    }
+    common
+}
+
+fn import_pattern(from: &str) -> Result<Pattern, AppError> {
+    crate::replace::validate_qualified_identifier(from, "--from").map_err(AppError::Config)?;
+    Ok(Pattern::Regex(format!(
+        r"(?m)^(\s*(?:from|import)\s+){}(\b)",
+        regex::escape(from)
+    )))
 }
 
 fn collect_symbols(

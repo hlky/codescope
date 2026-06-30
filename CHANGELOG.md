@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.4 - 2026-06-30
+
+- Added previewable, diff-aware edit commands for literal text replacement, regex replacement, symbol renames, import/module path rewrites, and Markdown heading/link rewrites.
+- Added scoped edit safety flags: `--preview`, `--apply`, `--include`, `--exclude`, `--max-files`, and `--confirm`.
+- Added CLI, documentation, and skill metadata coverage for agent IDE-style replacement workflows.
+
 ## v0.1.3 - 2026-06-30
 
 - Added CMake block result narrowing with `--contains`, `--around-line`, `--largest`, and `--smallest`.

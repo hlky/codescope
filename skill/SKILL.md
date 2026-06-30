@@ -29,6 +29,13 @@ codescope extract-section --name Usage.Installation --path README.md
 codescope references --name parse_config --path src
 codescope callers --name parse_config --path src
 codescope context --name parse_config --path src
+codescope replace-text --find "old" --replace "new" --path src --preview
+codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path src --preview
+codescope replace --name OldSymbol --with NewSymbol --kind function --path src --preview
+codescope rename-symbol --from Foo --to Bar --path src --preview
+codescope rewrite-import --from old.module --to new.module --path src --preview
+codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
+codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
 ## Behavior
@@ -49,6 +56,12 @@ codescope context --name parse_config --path src
 - Markdown heading discovery uses tree-sitter and ignores fenced-code headings.
 - Markdown headings have nested qualified names like `Usage.Installation`; `extract-section` returns the heading and content until the next heading at the same or higher level.
 - Use `--lang markdown` to limit search to Markdown and `--kind heading` for heading symbols.
+- Edit commands default to preview mode and print contextual diffs. Use `--apply` to write files and `--confirm` with `--apply` to require a clean Git worktree before editing.
+- Edit commands support `--include`, `--exclude`, `--max-files`, and `--lang` for scoped, filetype-aware changes.
+- Use `replace-text` for literal replacement and `replace-regex` for regex replacement with capture expansion.
+- Use `replace --kind function|class|struct|enum|variable|target|block|heading` or `rename-symbol --kind ...` when a symbol should be verified before rewriting identifier-boundary matches.
+- Use `rewrite-import` for Python import/module path changes.
+- Use `rewrite-markdown` for Markdown heading text or link target rewrites.
 - Use `--json` when stable fields are needed: `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`.
 
 ## Agent Workflow
@@ -64,4 +77,5 @@ codescope context --name parse_config --path src
 9. Use `codescope extract-section` for focused Markdown documentation context.
 10. Use `codescope references` or `codescope callers` before opening broad call-site regions.
 11. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
-12. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.
+12. Use edit commands with `--preview` first, use `--apply` to write files or `--confirm` with `--apply` to require a clean Git worktree before editing.
+13. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.

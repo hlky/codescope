@@ -18,6 +18,13 @@ codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
 codescope context --name foo --path .
+codescope replace-text --find "old" --replace "new" --path . --preview
+codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path . --preview
+codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
+codescope rename-symbol --from Foo --to Bar --path . --preview
+codescope rewrite-import --from old.module --to new.module --path . --preview
+codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
+codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
 ## Common Flags
@@ -29,6 +36,54 @@ codescope context --name foo --path .
 - `--backend auto|lsp|tree-sitter|lexical`: choose backend behavior.
 - `--root PATH`: set project root for clangd.
 - `--compile-commands-dir PATH`: pass a compilation database directory to clangd.
+
+## Edit Flags
+
+All edit commands are previewable and diff-aware:
+
+- `--preview`: print the planned edits without writing files. This is the default.
+- `--apply`: write matching edits to disk.
+- `--confirm`: with `--apply`, require `--path` to be in a clean Git worktree before writing.
+- `--include GLOB`: only edit matching paths, for example `--include "*.py"`.
+- `--exclude GLOB`: skip matching paths, for example `--exclude "vendor/*"`.
+- `--max-files N`: fail instead of editing more than `N` files.
+- `--lang python|c|cpp|c++|cuda|hip|cmake|markdown`: limit edits by file type.
+
+## Edit Commands
+
+`replace-text` performs literal text replacement:
+
+```bash
+codescope replace-text --find "old" --replace "new" --path . --preview
+codescope replace-text --find "old" --replace "new" --path . --apply --confirm
+```
+
+`replace-regex` performs regex replacement with capture expansion:
+
+```bash
+codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path src --preview
+```
+
+`replace` and `rename-symbol` perform identifier-boundary rewrites. When `--kind` is provided, `codescope` first verifies that a matching symbol of that kind exists before editing.
+
+```bash
+codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
+codescope rename-symbol --from Foo --to Bar --kind class --path . --preview
+codescope rename-symbol --from OldNamespace --to NewNamespace --lang cpp --path include --preview
+```
+
+`rewrite-import` rewrites Python import/module paths while preserving `import` and `from` syntax:
+
+```bash
+codescope rewrite-import --from old.module --to new.module --path src --preview
+```
+
+`rewrite-markdown` updates Markdown headings or link targets:
+
+```bash
+codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
+codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
+```
 
 ## Backends
 

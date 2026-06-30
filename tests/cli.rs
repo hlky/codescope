@@ -122,6 +122,207 @@ endforeach()
 }
 
 #[test]
+fn replace_text_previews_diff_without_modifying_files() {
+    let dir = fixture();
+    let file = dir.path().join("sample.py");
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "replace-text",
+            "--find",
+            "helper",
+            "--replace",
+            "assist",
+            "--lang",
+            "python",
+            "--preview",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("preview:"))
+        .stdout(predicate::str::contains("-def helper():"))
+        .stdout(predicate::str::contains("+def assist():"));
+
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(text.contains("def helper():"));
+    assert!(!text.contains("def assist():"));
+}
+
+#[test]
+fn replace_text_apply_respects_include_exclude_and_max_files() {
+    let dir = fixture();
+    std::fs::write(dir.path().join("notes.md"), "old\n").unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "replace-text",
+            "--find",
+            "old",
+            "--replace",
+            "new",
+            "--include",
+            "*.md",
+            "--exclude",
+            "README.md",
+            "--max-files",
+            "1",
+            "--apply",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "applied: 1 replacements across 1 files",
+        ));
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
+        "new\n"
+    );
+    assert!(
+        std::fs::read_to_string(dir.path().join("README.md"))
+            .unwrap()
+            .contains("overview")
+    );
+}
+
+#[test]
+fn replace_regex_supports_capture_expansion() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("sample.py"), "value_12 = 1\n").unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "replace-regex",
+            "--find",
+            "value_(\\d+)",
+            "--replace",
+            "item_${1}",
+            "--apply",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("sample.py")).unwrap(),
+        "item_12 = 1\n"
+    );
+}
+
+#[test]
+fn rename_symbol_uses_identifier_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sample.py"),
+        "def Foo():\n    return Foo()\n\ndef Foobar():\n    return 1\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "rename-symbol",
+            "--from",
+            "Foo",
+            "--to",
+            "Bar",
+            "--kind",
+            "function",
+            "--apply",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    let text = std::fs::read_to_string(dir.path().join("sample.py")).unwrap();
+    assert!(text.contains("def Bar():"));
+    assert!(text.contains("return Bar()"));
+    assert!(text.contains("def Foobar():"));
+}
+
+#[test]
+fn rewrite_import_preserves_import_syntax() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sample.py"),
+        "import old.module\nfrom old.module import thing\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "rewrite-import",
+            "--from",
+            "old.module",
+            "--to",
+            "new.module",
+            "--apply",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("sample.py")).unwrap(),
+        "import new.module\nfrom new.module import thing\n"
+    );
+}
+
+#[test]
+fn rewrite_markdown_updates_headings_and_links() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("README.md"),
+        "# Old Title\n[guide](docs/old.md#section)\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "rewrite-markdown",
+            "--heading-from",
+            "Old Title",
+            "--heading-to",
+            "New Title",
+            "--apply",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "rewrite-markdown",
+            "--link-from",
+            "docs/old.md",
+            "--link-to",
+            "docs/new.md",
+            "--apply",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("README.md")).unwrap(),
+        "# New Title\n[guide](docs/new.md#section)\n"
+    );
+}
+
+#[test]
 fn tree_sitter_cfamily_qualified_names_include_scope() {
     let dir = fixture();
     Command::cargo_bin("codescope")
