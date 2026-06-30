@@ -8,7 +8,9 @@ use crate::context::add_import_context;
 use crate::context_pack::{ContextPack, ContextPackItem};
 use crate::diagnostics::{DiagnosticOptions, DiagnosticRecord, DiagnosticTool};
 use crate::lsp::{ClangdOptions, NavigationRequest};
-use crate::model::{Backend, Language, NavigationRecord, Symbol, SymbolKind, SymbolKindFilter};
+use crate::model::{
+    Backend, Language, NavigationRecord, RelatedTestRecord, Symbol, SymbolKind, SymbolKindFilter,
+};
 use crate::replace::{Pattern, ReplaceOptions, Replacement};
 use crate::workspace::{language_for_path, line_slice, read_text, source_files};
 
@@ -42,6 +44,7 @@ enum Command {
     Definition(NavigationArgs),
     TypeOf(NavigationArgs),
     Hover(NavigationArgs),
+    TestsFor(TestsForArgs),
     Context(ContextArgs),
     ContextPack(ContextPackArgs),
     ReplaceText(ReplaceTextArgs),
@@ -280,6 +283,16 @@ struct NavigationArgs {
     column: Option<usize>,
 }
 
+#[derive(Args, Clone, Debug)]
+struct TestsForArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+}
+
 pub fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -368,6 +381,24 @@ pub fn run() -> ExitCode {
             println!("{rendered}");
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::RelatedTests { records, json }) => {
+            if records.is_empty() {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            let rendered = if json {
+                match crate::output::related_tests_json(&records) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                crate::output::related_tests_plain(&records)
+            };
+            println!("{rendered}");
+            ExitCode::from(EXIT_FOUND)
+        }
         Ok(RunOutput::ContextPack { pack, json }) => {
             if pack.items.is_empty() {
                 return ExitCode::from(EXIT_NO_MATCH);
@@ -411,6 +442,10 @@ enum RunOutput {
     },
     Navigation {
         records: Vec<NavigationRecord>,
+        json: bool,
+    },
+    RelatedTests {
+        records: Vec<RelatedTestRecord>,
         json: bool,
     },
     ContextPack {
@@ -547,6 +582,7 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
         Command::Definition(args) => run_navigation(args, NavigationRequest::Definition),
         Command::TypeOf(args) => run_navigation(args, NavigationRequest::TypeOf),
         Command::Hover(args) => run_navigation(args, NavigationRequest::Hover),
+        Command::TestsFor(args) => run_tests_for(args),
         Command::Context(args) => {
             let filter = if args.kind == SymbolKindFilter::All {
                 None
@@ -642,6 +678,21 @@ fn run_context_pack(args: ContextPackArgs) -> Result<RunOutput, AppError> {
     pack.rank_dedupe_and_truncate();
     Ok(RunOutput::ContextPack {
         pack,
+        json: args.common.json,
+    })
+}
+
+fn run_tests_for(args: TestsForArgs) -> Result<RunOutput, AppError> {
+    let records = crate::related_tests::collect(&crate::related_tests::RelatedTestOptions {
+        path: args.common.path,
+        lang: args.common.lang,
+        name: args.name,
+        file: args.file,
+        max_matches: args.common.max_matches,
+    })
+    .map_err(AppError::Config)?;
+    Ok(RunOutput::RelatedTests {
+        records,
         json: args.common.json,
     })
 }

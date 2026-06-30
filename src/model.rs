@@ -182,6 +182,50 @@ pub struct NavigationRecord {
     pub detail: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct RelatedTestRecord {
+    #[serde(serialize_with = "crate::path_display::serialize")]
+    pub path: PathBuf,
+    pub language: Language,
+    pub backend: String,
+    pub test_name: String,
+    pub qualified_name: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub reason: String,
+    pub score: usize,
+    pub source: String,
+}
+
+impl RelatedTestRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        path: PathBuf,
+        language: Language,
+        backend: impl Into<String>,
+        test_name: impl Into<String>,
+        qualified_name: impl Into<String>,
+        start_line: usize,
+        end_line: usize,
+        reason: impl Into<String>,
+        score: usize,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            path,
+            language,
+            backend: backend.into(),
+            test_name: test_name.into(),
+            qualified_name: qualified_name.into(),
+            start_line,
+            end_line,
+            reason: reason.into(),
+            score,
+            source: source.into(),
+        }
+    }
+}
+
 impl NavigationRecord {
     #[allow(clippy::too_many_arguments)]
     pub fn new(

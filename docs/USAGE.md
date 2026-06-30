@@ -21,6 +21,8 @@ codescope definition --name Foo --path .
 codescope definition --file src/foo.cpp --line 42 --column 17 --backend lsp
 codescope type-of --file src/foo.py --line 42 --column 12 --json
 codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json
+codescope tests-for --name foo --path .
+codescope tests-for --file src/foo.py --path . --json
 codescope context --name foo --path .
 codescope context-pack --name foo --path .
 codescope context-pack --file src/foo.py --around-line 80 --path .
@@ -60,6 +62,20 @@ codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json --
 Use either `--name` or the complete position form `--file --line --column`. Lines and columns are 1-based. C-family position navigation uses clangd; explicit `--backend lsp` exits with code `3` when clangd cannot run. Python uses structural tree-sitter lookup for definitions of functions, classes, variables, and imports; `type-of` and `hover` are best-effort until a semantic Python backend is available.
 
 Plain output includes the resolved source snippet and any detail text. JSON navigation records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `start_column`, `end_line`, `end_column`, `source`, and optional `detail`.
+
+## Test Discovery
+
+`tests-for` reports likely tests for a symbol name or source file:
+
+```bash
+codescope tests-for --name helper --path .
+codescope tests-for --file src/foo.py --path .
+codescope tests-for --file src/foo.cpp --path . --json --max-matches 10
+```
+
+Use either `--name` or `--file`. Results are heuristic and should be verified: Python uses test file naming, imports, subject references, and tree-sitter test function/class extraction; C-family files use test/spec naming, common framework macros, and subject/header references; CMake reports `add_test(...)` entries that reference the subject. Markdown documentation is not reported as tests.
+
+Plain output includes score and reason lines. JSON records include `path`, `language`, `backend`, `test_name`, `qualified_name`, `start_line`, `end_line`, `reason`, `score`, and `source`.
 
 ## Context Packs
 

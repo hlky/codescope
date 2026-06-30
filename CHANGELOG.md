@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.11 - 2026-06-30
+
+- Added `tests-for` heuristic test discovery by symbol or file, with scored reasons, JSON output, Python/C-family/CMake coverage, tests, docs, and skill guidance.
+
 ## v0.1.10 - 2026-06-30
 
 - Added `definition`, `type-of`, and `hover` navigation commands with clangd-backed C-family position lookup, Python structural definition fallback, JSON column ranges, tests, docs, and skill guidance.

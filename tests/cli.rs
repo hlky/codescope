@@ -128,6 +128,9 @@ foreach(item IN LISTS SAMPLE_OPS)
     add_executable(sample_tool ${item}.cpp)
     target_link_libraries(sample_tool PRIVATE $<TARGET_LINKER_FILE:sample_core>)
 endforeach()
+
+enable_testing()
+add_test(NAME sample_helper COMMAND sample_tool --case helper)
 "#
         .trim_start(),
     )
@@ -371,6 +374,51 @@ fn diagnostics_cargo_json_emits_normalized_records() {
         .stdout(predicate::str::contains(r#""tool": "cargo""#))
         .stdout(predicate::str::contains(r#""severity": "error""#))
         .stdout(predicate::str::contains("cannot find value"));
+}
+
+#[test]
+fn tests_for_name_finds_python_test_referencing_symbol() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["tests-for", "--name", "helper", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tests/test_sample.py"))
+        .stdout(predicate::str::contains("test_helper"))
+        .stdout(predicate::str::contains("reason:"));
+}
+
+#[test]
+fn tests_for_file_finds_named_python_test_file() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["tests-for", "--file", "sample.py", "--json", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""test_name": "test_helper""#))
+        .stdout(predicate::str::contains(
+            "test filename matches subject file",
+        ))
+        .stdout(predicate::str::contains(r#""language": "python""#));
+}
+
+#[test]
+fn tests_for_reports_cmake_add_test_mapping() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args(["tests-for", "--name", "helper", "--lang", "cmake", "--path"])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("sample_helper"))
+        .stdout(predicate::str::contains(
+            "CMake add_test references subject",
+        ));
 }
 
 #[test]

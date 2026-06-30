@@ -1,4 +1,4 @@
-use crate::model::{NavigationRecord, Symbol};
+use crate::model::{NavigationRecord, RelatedTestRecord, Symbol};
 use crate::path_display::display_path;
 
 pub fn json(symbols: &[Symbol]) -> anyhow::Result<String> {
@@ -69,6 +69,31 @@ pub fn navigation_plain(records: &[NavigationRecord]) -> String {
                 record.kind,
                 record.qualified_name,
                 detail,
+                record.source.trim_end()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn related_tests_json(records: &[RelatedTestRecord]) -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(records)?)
+}
+
+pub fn related_tests_plain(records: &[RelatedTestRecord]) -> String {
+    records
+        .iter()
+        .map(|record| {
+            format!(
+                "// {}:{}-{} ({}, {}, score {}, {})\n// reason: {}\n{}\n",
+                display_path(&record.path),
+                record.start_line,
+                record.end_line,
+                record.language,
+                record.backend,
+                record.score,
+                record.qualified_name,
+                record.reason,
                 record.source.trim_end()
             )
         })
