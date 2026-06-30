@@ -23,6 +23,9 @@ codescope type-of --file src/foo.py --line 42 --column 12 --json
 codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json
 codescope tests-for --name foo --path .
 codescope tests-for --file src/foo.py --path . --json
+codescope impact --name foo --path .
+codescope impact --file src/foo.cpp --path . --json
+codescope impact --file src/foo.cpp --changed-lines 10-30 --path .
 codescope context --name foo --path .
 codescope context-pack --name foo --path .
 codescope context-pack --file src/foo.py --around-line 80 --path .
@@ -77,6 +80,20 @@ codescope tests-for --file src/foo.cpp --path . --json --max-matches 10
 Use either `--name` or `--file`. Results are heuristic and should be verified: Python uses test file naming, imports, subject references, and tree-sitter test function/class extraction; C-family files use test/spec naming, common framework macros, and subject/header references; CMake reports `add_test(...)` entries that reference the subject. Markdown documentation is not reported as tests.
 
 Plain output includes score and reason lines. JSON records include `path`, `language`, `backend`, `test_name`, `qualified_name`, `start_line`, `end_line`, `reason`, `score`, and `source`.
+
+## Impact Reports
+
+`impact` reports the likely blast radius of changing a symbol, file, or line range:
+
+```bash
+codescope impact --name helper --path .
+codescope impact --file src/foo.cpp --path .
+codescope impact --file src/foo.cpp --changed-lines 10-30 --path . --json
+```
+
+Use `--name` for symbol impact, `--file` for file impact, or `--file --changed-lines START-END` to resolve the enclosing symbol for a line range. Reports combine definitions, references, callers, best-effort callees, related tests, Markdown docs, CMake target associations, diagnostics, confidence, and notes. CMake file associations are lexical and currently look for target commands that mention the subject file.
+
+Plain output is grouped by impact category. JSON output includes `subject`, `definitions`, `references`, `callers`, `callees`, `tests`, `docs`, `build_targets`, `diagnostics`, `confidence`, and `notes`; each entry includes `path`, `start_line`, `end_line`, `language`, `backend`, `kind`, `name`, `qualified_name`, `reason`, and `source`.
 
 ## Context Packs
 

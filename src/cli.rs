@@ -3,6 +3,7 @@ use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, error::ErrorKind};
+use serde::Serialize;
 
 use crate::context::add_import_context;
 use crate::context_pack::{ContextPack, ContextPackItem};
@@ -46,6 +47,7 @@ enum Command {
     TypeOf(NavigationArgs),
     Hover(NavigationArgs),
     TestsFor(TestsForArgs),
+    Impact(ImpactArgs),
     Context(ContextArgs),
     ContextPack(ContextPackArgs),
     ReplaceText(ReplaceTextArgs),
@@ -302,6 +304,40 @@ struct TestsForArgs {
     file: Option<PathBuf>,
 }
 
+#[derive(Args, Clone, Debug)]
+struct ImpactArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long, value_parser = parse_line_range)]
+    changed_lines: Option<LineRange>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LineRange {
+    start: usize,
+    end: usize,
+}
+
+fn parse_line_range(value: &str) -> Result<LineRange, String> {
+    let Some((start, end)) = value.split_once('-') else {
+        return Err("expected START-END".to_string());
+    };
+    let start = start
+        .parse::<usize>()
+        .map_err(|_| "range start must be a positive integer".to_string())?;
+    let end = end
+        .parse::<usize>()
+        .map_err(|_| "range end must be a positive integer".to_string())?;
+    if start == 0 || end == 0 || start > end {
+        return Err("range must be 1-based and START must be <= END".to_string());
+    }
+    Ok(LineRange { start, end })
+}
+
 pub fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -438,6 +474,24 @@ pub fn run() -> ExitCode {
             println!("{rendered}");
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::Impact { report, json }) => {
+            if !report.has_entries() {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            let rendered = if json {
+                match serde_json::to_string_pretty(&report) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                render_impact_plain(&report)
+            };
+            println!("{rendered}");
+            ExitCode::from(EXIT_FOUND)
+        }
         Ok(RunOutput::ContextPack { pack, json }) => {
             if pack.items.is_empty() {
                 return ExitCode::from(EXIT_NO_MATCH);
@@ -488,6 +542,10 @@ enum RunOutput {
         records: Vec<RelatedTestRecord>,
         json: bool,
     },
+    Impact {
+        report: ImpactReport,
+        json: bool,
+    },
     ContextPack {
         pack: ContextPack,
         json: bool,
@@ -497,6 +555,123 @@ enum RunOutput {
 struct ReplaceRunOutput {
     summary: crate::replace::ReplaceSummary,
     json: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ImpactReport {
+    subject: String,
+    definitions: Vec<ImpactEntry>,
+    references: Vec<ImpactEntry>,
+    callers: Vec<ImpactEntry>,
+    callees: Vec<ImpactEntry>,
+    tests: Vec<ImpactEntry>,
+    docs: Vec<ImpactEntry>,
+    build_targets: Vec<ImpactEntry>,
+    diagnostics: Vec<String>,
+    confidence: String,
+    notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ImpactEntry {
+    #[serde(serialize_with = "crate::path_display::serialize")]
+    path: PathBuf,
+    start_line: usize,
+    end_line: usize,
+    language: Language,
+    backend: String,
+    kind: String,
+    name: String,
+    qualified_name: String,
+    reason: String,
+    source: String,
+}
+
+impl ImpactReport {
+    fn new(subject: impl Into<String>) -> Self {
+        Self {
+            subject: subject.into(),
+            definitions: Vec::new(),
+            references: Vec::new(),
+            callers: Vec::new(),
+            callees: Vec::new(),
+            tests: Vec::new(),
+            docs: Vec::new(),
+            build_targets: Vec::new(),
+            diagnostics: Vec::new(),
+            confidence: "medium".to_string(),
+            notes: Vec::new(),
+        }
+    }
+
+    fn has_entries(&self) -> bool {
+        !self.definitions.is_empty()
+            || !self.references.is_empty()
+            || !self.callers.is_empty()
+            || !self.callees.is_empty()
+            || !self.tests.is_empty()
+            || !self.docs.is_empty()
+            || !self.build_targets.is_empty()
+    }
+}
+
+impl ImpactEntry {
+    fn from_symbol(symbol: Symbol, reason: impl Into<String>) -> Self {
+        Self {
+            path: symbol.path,
+            start_line: symbol.start_line,
+            end_line: symbol.end_line,
+            language: symbol.language,
+            backend: symbol.backend,
+            kind: symbol.kind.to_string(),
+            name: symbol.name,
+            qualified_name: symbol.qualified_name,
+            reason: reason.into(),
+            source: symbol.source,
+        }
+    }
+
+    fn from_test(record: RelatedTestRecord) -> Self {
+        Self {
+            path: record.path,
+            start_line: record.start_line,
+            end_line: record.end_line,
+            language: record.language,
+            backend: record.backend,
+            kind: "test".to_string(),
+            name: record.test_name,
+            qualified_name: record.qualified_name,
+            reason: record.reason,
+            source: record.source,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn synthetic(
+        path: PathBuf,
+        start_line: usize,
+        end_line: usize,
+        language: Language,
+        backend: impl Into<String>,
+        kind: impl Into<String>,
+        name: impl Into<String>,
+        qualified_name: impl Into<String>,
+        reason: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            path,
+            start_line,
+            end_line,
+            language,
+            backend: backend.into(),
+            kind: kind.into(),
+            name: name.into(),
+            qualified_name: qualified_name.into(),
+            reason: reason.into(),
+            source: source.into(),
+        }
+    }
 }
 
 fn symbols_output(symbols: Vec<Symbol>, json: bool, source_output: bool) -> RunOutput {
@@ -628,6 +803,7 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
         Command::TypeOf(args) => run_navigation(args, NavigationRequest::TypeOf),
         Command::Hover(args) => run_navigation(args, NavigationRequest::Hover),
         Command::TestsFor(args) => run_tests_for(args),
+        Command::Impact(args) => run_impact(args),
         Command::Context(args) => {
             let filter = if args.kind == SymbolKindFilter::All {
                 None
@@ -738,6 +914,536 @@ fn run_tests_for(args: TestsForArgs) -> Result<RunOutput, AppError> {
         records,
         json: args.common.json,
     })
+}
+
+fn run_impact(args: ImpactArgs) -> Result<RunOutput, AppError> {
+    let subject = impact_subject(&args)?;
+    let mut report = ImpactReport::new(subject.clone());
+    let mut primary = if let Some(name) = &args.name {
+        let mut common = args.common.clone();
+        common.max_matches = common.max_matches.max(1);
+        collect_symbols(&common, None, Some(name))?
+    } else if args.changed_lines.is_some() {
+        collect_enclosing_symbols(
+            &args.common,
+            args.file.as_ref(),
+            args.changed_lines.map(|range| range.start),
+        )?
+    } else {
+        collect_file_symbols(&args.common, args.file.as_ref())?
+    };
+    primary.truncate(args.common.max_matches);
+
+    for symbol in primary.iter().cloned() {
+        let reason = if args.changed_lines.is_some() {
+            "enclosing symbol for changed line range"
+        } else if args.file.is_some() && args.name.is_none() {
+            "symbol defined in subject file"
+        } else {
+            "definition matching subject name"
+        };
+        report
+            .definitions
+            .push(ImpactEntry::from_symbol(symbol, reason));
+    }
+
+    if let Some(name) = impact_lookup_name(&args, &primary) {
+        collect_impact_for_name(&mut report, &args.common, &name, &primary);
+    }
+
+    if let Some(file) = args.file.as_ref() {
+        collect_impact_for_file(&mut report, &args.common, file, &primary)?;
+    }
+
+    if report
+        .definitions
+        .iter()
+        .chain(report.references.iter())
+        .chain(report.callers.iter())
+        .chain(report.callees.iter())
+        .chain(report.tests.iter())
+        .chain(report.docs.iter())
+        .chain(report.build_targets.iter())
+        .any(|entry| entry.backend.contains("lexical"))
+    {
+        report.confidence = "medium".to_string();
+        report.notes.push(
+            "some impact entries come from lexical matching; verify noisy/common names".to_string(),
+        );
+    } else if report.has_entries() {
+        report.confidence = "high".to_string();
+    }
+
+    dedupe_impact_report(&mut report);
+    Ok(RunOutput::Impact {
+        report,
+        json: args.common.json,
+    })
+}
+
+fn impact_subject(args: &ImpactArgs) -> Result<String, AppError> {
+    match (&args.name, &args.file, args.changed_lines) {
+        (Some(name), None, None) => Ok(name.clone()),
+        (None, Some(file), None) => Ok(file.display().to_string()),
+        (None, Some(file), Some(range)) => {
+            if range.start == 0 || range.end == 0 || range.start > range.end {
+                return Err(AppError::Config(anyhow::anyhow!(
+                    "--changed-lines must be a 1-based START-END range"
+                )));
+            }
+            Ok(format!(
+                "{} changed lines {}-{}",
+                file.display(),
+                range.start,
+                range.end
+            ))
+        }
+        (Some(_), Some(_), _) => Err(AppError::Config(anyhow::anyhow!(
+            "impact accepts --name or --file, not both"
+        ))),
+        (Some(_), None, Some(_)) => Err(AppError::Config(anyhow::anyhow!(
+            "impact --changed-lines requires --file"
+        ))),
+        (None, None, Some(_)) => Err(AppError::Config(anyhow::anyhow!(
+            "impact --changed-lines requires --file"
+        ))),
+        (None, None, None) => Err(AppError::Config(anyhow::anyhow!(
+            "impact requires --name or --file"
+        ))),
+    }
+}
+
+fn impact_lookup_name(args: &ImpactArgs, primary: &[Symbol]) -> Option<String> {
+    args.name.clone().or_else(|| {
+        (args.changed_lines.is_some())
+            .then(|| primary.first().map(|symbol| symbol.qualified_name.clone()))
+            .flatten()
+    })
+}
+
+fn collect_file_symbols(
+    common: &CommonArgs,
+    file: Option<&PathBuf>,
+) -> Result<Vec<Symbol>, AppError> {
+    let Some(file) = file else {
+        return Ok(Vec::new());
+    };
+    let base = common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
+        .map_err(AppError::Config)?;
+    let file = if file.is_absolute() {
+        file.clone()
+    } else if base.is_file() {
+        base.parent()
+            .map(|parent| parent.join(file))
+            .unwrap_or_else(|| file.clone())
+    } else {
+        base.join(file)
+    }
+    .canonicalize()
+    .with_context(|| format!("failed to resolve --file {}", file.display()))
+    .map_err(AppError::Config)?;
+    let mut file_common = common.clone();
+    file_common.path = file;
+    file_common.max_matches = usize::MAX;
+    collect_symbols(&file_common, None, None)
+}
+
+fn collect_impact_for_name(
+    report: &mut ImpactReport,
+    common: &CommonArgs,
+    name: &str,
+    primary: &[Symbol],
+) {
+    match collect_references(common, name) {
+        Ok(references) => {
+            report.references.extend(
+                references
+                    .into_iter()
+                    .filter(|reference| !primary.iter().any(|symbol| same_range(symbol, reference)))
+                    .map(|reference| {
+                        ImpactEntry::from_symbol(reference, "direct reference to subject")
+                    }),
+            );
+        }
+        Err(error) => report.diagnostics.push(format!(
+            "reference collection failed: {}",
+            app_error_note(error)
+        )),
+    }
+
+    match collect_callers(common, name) {
+        Ok(callers) => {
+            report.callers.extend(
+                callers
+                    .into_iter()
+                    .map(|caller| ImpactEntry::from_symbol(caller, "direct caller of subject")),
+            );
+        }
+        Err(error) => report.diagnostics.push(format!(
+            "caller collection failed: {}",
+            app_error_note(error)
+        )),
+    }
+
+    report
+        .callees
+        .extend(collect_callees_from_primary(common, primary, name));
+
+    if let Ok(tests) = crate::related_tests::collect(&crate::related_tests::RelatedTestOptions {
+        path: common.path.clone(),
+        lang: common.lang,
+        name: Some(name.to_string()),
+        file: None,
+        max_matches: common.max_matches,
+    }) {
+        report
+            .tests
+            .extend(tests.into_iter().map(ImpactEntry::from_test));
+    }
+
+    collect_impact_docs(report, common, name);
+    collect_impact_build_for_name(report, common, name);
+}
+
+fn collect_impact_for_file(
+    report: &mut ImpactReport,
+    common: &CommonArgs,
+    file: &PathBuf,
+    primary: &[Symbol],
+) -> Result<(), AppError> {
+    let subject_file = resolve_subject_file(common, file).ok();
+    if let Ok(tests) = crate::related_tests::collect(&crate::related_tests::RelatedTestOptions {
+        path: common.path.clone(),
+        lang: common.lang,
+        name: None,
+        file: Some(file.clone()),
+        max_matches: common.max_matches,
+    }) {
+        report.tests.extend(
+            tests
+                .into_iter()
+                .filter(|record| subject_file.as_ref() != Some(&record.path))
+                .map(ImpactEntry::from_test),
+        );
+    }
+
+    for symbol in primary.iter().take(common.max_matches) {
+        collect_impact_docs(report, common, &symbol.name);
+    }
+    collect_impact_build_for_file(report, common, file)?;
+    Ok(())
+}
+
+fn resolve_subject_file(common: &CommonArgs, file: &PathBuf) -> Result<PathBuf, AppError> {
+    let base = common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
+        .map_err(AppError::Config)?;
+    let path = if file.is_absolute() {
+        file.clone()
+    } else if base.is_file() {
+        base.parent()
+            .map(|parent| parent.join(file))
+            .unwrap_or_else(|| file.clone())
+    } else {
+        base.join(file)
+    };
+    path.canonicalize()
+        .with_context(|| format!("failed to resolve --file {}", file.display()))
+        .map_err(AppError::Config)
+}
+
+fn collect_impact_docs(report: &mut ImpactReport, common: &CommonArgs, name: &str) {
+    let Ok(root) = common.path.canonicalize() else {
+        return;
+    };
+    let needle = short_impact_name(name).to_ascii_lowercase();
+    for file in source_files(&root, Some(crate::model::LanguageFilter::Markdown)) {
+        let Some(text) = read_text(&file) else {
+            continue;
+        };
+        if !text.to_ascii_lowercase().contains(&needle) {
+            continue;
+        }
+        let line = first_matching_line(&text, &needle).unwrap_or(1);
+        let start = line.saturating_sub(3).max(1);
+        let end = line + 8;
+        report.docs.push(ImpactEntry::synthetic(
+            file,
+            start,
+            end,
+            Language::Markdown,
+            "lexical",
+            "doc",
+            name,
+            name,
+            "Markdown mention of subject",
+            line_slice(&text, start, end),
+        ));
+        if report.docs.len() >= common.max_matches {
+            break;
+        }
+    }
+}
+
+fn collect_impact_build_for_name(report: &mut ImpactReport, common: &CommonArgs, name: &str) {
+    let mut cmake_common = common.clone();
+    cmake_common.lang = Some(crate::model::LanguageFilter::Cmake);
+    cmake_common.max_matches = common.max_matches;
+    if let Ok(symbols) = collect_symbols(&cmake_common, Some(SymbolKindFilter::Target), Some(name))
+    {
+        report.build_targets.extend(
+            symbols
+                .into_iter()
+                .map(|symbol| ImpactEntry::from_symbol(symbol, "CMake target matching subject")),
+        );
+    }
+    if let Ok(references) = collect_references(&cmake_common, name) {
+        report.build_targets.extend(
+            references
+                .into_iter()
+                .map(|reference| ImpactEntry::from_symbol(reference, "CMake reference to subject")),
+        );
+    }
+}
+
+fn collect_impact_build_for_file(
+    report: &mut ImpactReport,
+    common: &CommonArgs,
+    file: &PathBuf,
+) -> Result<(), AppError> {
+    let root = common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
+        .map_err(AppError::Config)?;
+    let resolved = if file.is_absolute() {
+        file.clone()
+    } else if root.is_file() {
+        root.parent()
+            .map(|parent| parent.join(file))
+            .unwrap_or_else(|| file.clone())
+    } else {
+        root.join(file)
+    }
+    .canonicalize()
+    .with_context(|| format!("failed to resolve --file {}", file.display()))
+    .map_err(AppError::Config)?;
+    let file_name = resolved
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| file.display().to_string());
+    let root = if root.is_file() {
+        root.parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or(root)
+    } else {
+        root
+    };
+    for cmake_file in source_files(&root, Some(crate::model::LanguageFilter::Cmake)) {
+        let Some(text) = read_text(&cmake_file) else {
+            continue;
+        };
+        collect_cmake_file_mentions(report, &cmake_file, &text, &file_name);
+        if report.build_targets.len() >= common.max_matches {
+            report.build_targets.truncate(common.max_matches);
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn collect_cmake_file_mentions(
+    report: &mut ImpactReport,
+    path: &std::path::Path,
+    text: &str,
+    file_name: &str,
+) {
+    let Ok(command_pattern) = regex::Regex::new(
+        r"(?is)(add_library|add_executable|pybind11_add_module|target_sources)\s*\((?P<args>.*?)\)",
+    ) else {
+        return;
+    };
+    for capture in command_pattern.captures_iter(text) {
+        let Some(matched) = capture.get(0) else {
+            continue;
+        };
+        let args = capture.name("args").map(|m| m.as_str()).unwrap_or_default();
+        if !args.contains(file_name) {
+            continue;
+        }
+        let target = args
+            .split_whitespace()
+            .next()
+            .unwrap_or(file_name)
+            .trim_matches('"')
+            .to_string();
+        let start = byte_line(text, matched.start());
+        let end = byte_line(text, matched.end());
+        report.build_targets.push(ImpactEntry::synthetic(
+            path.to_path_buf(),
+            start,
+            end,
+            Language::Cmake,
+            "lexical",
+            "target",
+            target.clone(),
+            target,
+            "CMake target references subject file",
+            line_slice(text, start, end),
+        ));
+    }
+}
+
+fn collect_callees_from_primary(
+    common: &CommonArgs,
+    primary: &[Symbol],
+    subject_name: &str,
+) -> Vec<ImpactEntry> {
+    let mut out = Vec::new();
+    let Ok(pattern) = regex::Regex::new(r"\b([A-Za-z_][A-Za-z0-9_:.\-]*)\s*\(") else {
+        return out;
+    };
+    let subject_short = short_impact_name(subject_name);
+    for symbol in primary {
+        for capture in pattern.captures_iter(&symbol.source) {
+            let Some(name) = capture.get(1).map(|m| m.as_str()) else {
+                continue;
+            };
+            let short = short_impact_name(name);
+            if short == subject_short || is_common_call_token(&short) {
+                continue;
+            }
+            let line_offset = symbol.source[..capture.get(0).map(|m| m.start()).unwrap_or(0)]
+                .bytes()
+                .filter(|value| *value == b'\n')
+                .count();
+            out.push(ImpactEntry::synthetic(
+                symbol.path.clone(),
+                symbol.start_line + line_offset,
+                symbol.start_line + line_offset,
+                symbol.language,
+                "lexical",
+                "callee",
+                short.clone(),
+                short,
+                "call expression inside subject definition",
+                symbol.source.lines().nth(line_offset).unwrap_or_default(),
+            ));
+            if out.len() >= common.max_matches {
+                return out;
+            }
+        }
+    }
+    out
+}
+
+fn dedupe_impact_report(report: &mut ImpactReport) {
+    dedupe_impact_entries(&mut report.definitions);
+    dedupe_impact_entries(&mut report.references);
+    dedupe_impact_entries(&mut report.callers);
+    dedupe_impact_entries(&mut report.callees);
+    dedupe_impact_entries(&mut report.tests);
+    dedupe_impact_entries(&mut report.docs);
+    dedupe_impact_entries(&mut report.build_targets);
+}
+
+fn dedupe_impact_entries(entries: &mut Vec<ImpactEntry>) {
+    let mut out = Vec::new();
+    for entry in entries.drain(..) {
+        if !out.iter().any(|existing: &ImpactEntry| {
+            existing.path == entry.path
+                && existing.start_line == entry.start_line
+                && existing.end_line == entry.end_line
+                && existing.kind == entry.kind
+                && existing.qualified_name == entry.qualified_name
+        }) {
+            out.push(entry);
+        }
+    }
+    *entries = out;
+}
+
+fn render_impact_plain(report: &ImpactReport) -> String {
+    let mut out = Vec::new();
+    out.push(format!("# Impact: {}", report.subject));
+    out.push(format!("confidence: {}", report.confidence));
+    render_impact_group(&mut out, "definitions", &report.definitions);
+    render_impact_group(&mut out, "references", &report.references);
+    render_impact_group(&mut out, "callers", &report.callers);
+    render_impact_group(&mut out, "callees", &report.callees);
+    render_impact_group(&mut out, "tests", &report.tests);
+    render_impact_group(&mut out, "docs", &report.docs);
+    render_impact_group(&mut out, "build_targets", &report.build_targets);
+    if !report.diagnostics.is_empty() {
+        out.push(String::new());
+        out.push("## diagnostics".to_string());
+        out.extend(report.diagnostics.iter().map(|item| format!("- {item}")));
+    }
+    if !report.notes.is_empty() {
+        out.push(String::new());
+        out.push("## notes".to_string());
+        out.extend(report.notes.iter().map(|item| format!("- {item}")));
+    }
+    out.join("\n")
+}
+
+fn render_impact_group(out: &mut Vec<String>, title: &str, entries: &[ImpactEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+    out.push(String::new());
+    out.push(format!("## {title}"));
+    for entry in entries {
+        out.push(format!(
+            "- {}:{}-{} ({}, {}, {}, {})",
+            crate::path_display::display_path(&entry.path),
+            entry.start_line,
+            entry.end_line,
+            entry.language,
+            entry.backend,
+            entry.kind,
+            entry.qualified_name
+        ));
+        out.push(format!("  reason: {}", entry.reason));
+    }
+}
+
+fn short_impact_name(name: &str) -> String {
+    name.replace("::", ".")
+        .rsplit('.')
+        .next()
+        .unwrap_or(name)
+        .to_string()
+}
+
+fn is_common_call_token(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "for"
+            | "while"
+            | "switch"
+            | "return"
+            | "sizeof"
+            | "static_cast"
+            | "reinterpret_cast"
+            | "const_cast"
+            | "dynamic_cast"
+            | "print"
+            | "len"
+            | "range"
+            | "str"
+            | "int"
+            | "float"
+            | "bool"
+            | "list"
+            | "dict"
+            | "set"
+    )
 }
 
 fn run_navigation(args: NavigationArgs, request: NavigationRequest) -> Result<RunOutput, AppError> {
@@ -1312,6 +2018,10 @@ fn first_matching_line(text: &str, needle: &str) -> Option<usize> {
     text.lines()
         .position(|line| line.to_ascii_lowercase().contains(needle))
         .map(|idx| idx + 1)
+}
+
+fn byte_line(text: &str, byte: usize) -> usize {
+    text[..byte].bytes().filter(|value| *value == b'\n').count() + 1
 }
 
 fn app_error_note(error: AppError) -> String {

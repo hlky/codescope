@@ -111,7 +111,7 @@ list(APPEND SAMPLE_OPS
 )
 
 if(ENABLE_ACCELERATOR)
-    add_library(sample_core STATIC core.cpp)
+    add_library(sample_core STATIC sample.cpp)
     target_link_libraries(sample_core PRIVATE dependency)
     list(APPEND SAMPLE_TARGETS sample_core)
     foreach(item IN LISTS SAMPLE_OPS)
@@ -550,6 +550,90 @@ fn tests_for_reports_cmake_add_test_mapping() {
         .stdout(predicate::str::contains(
             "CMake add_test references subject",
         ));
+}
+
+#[test]
+fn impact_name_reports_callers_references_tests_and_docs() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "impact",
+            "--backend",
+            "tree-sitter",
+            "--name",
+            "helper",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Impact: helper"))
+        .stdout(predicate::str::contains("## references"))
+        .stdout(predicate::str::contains("## callers"))
+        .stdout(predicate::str::contains("caller"))
+        .stdout(predicate::str::contains("## tests"))
+        .stdout(predicate::str::contains("test_helper"))
+        .stdout(predicate::str::contains("## docs"))
+        .stdout(predicate::str::contains("README.md"));
+}
+
+#[test]
+fn impact_file_reports_symbols_and_cmake_target_association() {
+    let dir = fixture();
+    let output = Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "impact",
+            "--file",
+            "sample.cpp",
+            "--lang",
+            "cpp",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        value["definitions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["qualified_name"].as_str().unwrap().contains("helper"))
+    );
+    assert!(
+        value["build_targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["qualified_name"].as_str() == Some("sample_core"))
+    );
+}
+
+#[test]
+fn impact_changed_lines_uses_enclosing_symbol() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "impact",
+            "--file",
+            "sample.py",
+            "--changed-lines",
+            "16-18",
+            "--lang",
+            "python",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("function, caller"))
+        .stdout(predicate::str::contains("enclosing symbol"));
 }
 
 #[test]

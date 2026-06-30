@@ -34,6 +34,9 @@ codescope type-of --file src/config.py --line 42 --column 12 --json
 codescope hover --file src/native.cpp --line 42 --column 17 --backend lsp --json
 codescope tests-for --name parse_config --path src
 codescope tests-for --file src/config.py --path src --json
+codescope impact --name parse_config --path src
+codescope impact --file src/native.cpp --path src --json
+codescope impact --file src/native.cpp --changed-lines 10-30 --path src
 codescope context --name parse_config --path src
 codescope context-pack --name parse_config --path src
 codescope context-pack --file src/config.py --around-line 80 --path src
@@ -64,6 +67,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - C-family `definition`, `type-of`, and `hover` use clangd for precise position-based navigation.
 - Python `definition` uses structural tree-sitter lookup for functions, classes, variables, and imports; Python `type-of` and `hover` are best-effort structural summaries.
 - Use `tests-for` to jump from a symbol name or implementation file to likely tests. Results are heuristic: Python uses test names/imports/references with tree-sitter test symbols; C-family uses test/spec files and common framework macros; CMake reports `add_test(...)`; Markdown docs are excluded.
+- Use `impact` before changing a symbol, file, or line range when you need a blast-radius report. It combines definitions, references, callers, best-effort callees, related tests, Markdown docs, CMake target associations, confidence, and notes. `--file --changed-lines START-END` resolves the enclosing symbol and delegates to symbol impact.
 - Use `--backend lsp` to require semantic C-family results, and pass `--compile-commands-dir` when the project has a non-default compilation database.
 - Use `--root` when the clangd project root differs from the search `--path`.
 - Use `context-pack` before broad file reads when you need ranked editing context for a symbol or line; it combines definitions or enclosing symbols, imports/includes, callers, references, related tests, docs, CMake metadata, diagnostics, omitted items, and confidence notes under an approximate source-character budget.
@@ -84,7 +88,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - Use `rename-symbol --semantic` for safer refactor previews. Python semantic rename changes tree-sitter definition/reference identifier nodes and reports strings/comments as skipped; C-family semantic rename requires clangd and exits with code `3` if clangd cannot run or the rename is ambiguous.
 - Use `rewrite-import` for Python import/module path changes.
 - Use `rewrite-markdown` for Markdown heading text or link target rewrites.
-- Use `--json` when stable fields are needed. Symbol records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`; navigation records add `start_column`, `end_column`, and optional `detail`; related test records include `test_name`, `qualified_name`, `reason`, `score`, and `source`; diagnostic records include `path`, `language`, `backend`, `tool`, `severity`, `code`, `message`, start/end line and column fields, and `related`. Explicit diagnostics tool failures are emitted as `backend-error` records and exit with code `3`.
+- Use `--json` when stable fields are needed. Symbol records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`; navigation records add `start_column`, `end_column`, and optional `detail`; related test records include `test_name`, `qualified_name`, `reason`, `score`, and `source`; impact reports include grouped `definitions`, `references`, `callers`, `callees`, `tests`, `docs`, `build_targets`, `diagnostics`, `confidence`, and `notes`; diagnostic records include `path`, `language`, `backend`, `tool`, `severity`, `code`, `message`, start/end line and column fields, and `related`. Explicit diagnostics tool failures are emitted as `backend-error` records and exit with code `3`.
 
 ## Agent Workflow
 
@@ -100,9 +104,10 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 10. Use `codescope references` or `codescope callers` before opening broad call-site regions.
 11. Use `codescope definition`, `codescope type-of`, or `codescope hover` when you have a symbol use location and need IDE-style navigation.
 12. Use `codescope tests-for --name SYMBOL --path .` or `codescope tests-for --file PATH --path .` to find likely tests before changing behavior.
-13. Use `codescope context-pack --name SYMBOL --path .` before broad file reads when preparing to edit a symbol.
-14. Use `codescope context-pack --file PATH --around-line LINE --path .` when the edit target is a line range rather than a known symbol.
-15. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
-16. Use `codescope diagnostics --path .` before or after edits when compiler or IDE squiggles would change the next step.
-17. Use edit commands with `--preview` first, use `--apply` to write files or `--confirm` with `--apply` to require a clean Git worktree before editing.
-18. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.
+13. Use `codescope impact --name SYMBOL --path .` or `codescope impact --file PATH --path .` to estimate the blast radius before changing behavior.
+14. Use `codescope context-pack --name SYMBOL --path .` before broad file reads when preparing to edit a symbol.
+15. Use `codescope context-pack --file PATH --around-line LINE --path .` when the edit target is a line range rather than a known symbol.
+16. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
+17. Use `codescope diagnostics --path .` before or after edits when compiler or IDE squiggles would change the next step.
+18. Use edit commands with `--preview` first, use `--apply` to write files or `--confirm` with `--apply` to require a clean Git worktree before editing.
+19. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd behavior is required.

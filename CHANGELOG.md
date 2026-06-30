@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.14 - 2026-06-30
+
+- Added `impact` reports for symbol, file, and changed-line subjects, combining definitions, references, callers, best-effort callees, related tests, Markdown docs, CMake target associations, confidence notes, JSON output, docs, skill guidance, and CLI coverage.
+
 ## v0.1.13 - 2026-06-30
 
 - Added `rename-symbol --semantic` with tree-sitter Python definition/reference edits, clangd-backed C-family rename plans, skipped textual match reporting, JSON plan output, conflict detection, tests, docs, and skill guidance.

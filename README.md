@@ -23,6 +23,9 @@ codescope type-of --file src/foo.py --line 42 --column 12 --json
 codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json
 codescope tests-for --name foo --path .
 codescope tests-for --file src/foo.py --path . --json
+codescope impact --name foo --path .
+codescope impact --file src/foo.cpp --path . --json
+codescope impact --file src/foo.cpp --changed-lines 10-30 --path .
 codescope context --name foo --path .
 codescope context-pack --name foo --path .
 codescope context-pack --file src/foo.py --around-line 80 --path .
@@ -43,7 +46,7 @@ codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" -
 codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, and IDE-style navigation, heuristic test discovery, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, and IDE-style navigation, heuristic test discovery and change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
@@ -51,6 +54,7 @@ Current implementation:
 - C-family semantic symbols/references plus definition, type, and hover navigation via clangd LSP when available.
 - Python structural definition navigation for functions, classes, variables, and imports, with best-effort `type-of` and `hover` summaries.
 - Heuristic `tests-for` discovery by symbol or file, including Python test symbols, C-family test macros, and CMake `add_test(...)` entries.
+- `impact` reports for a symbol, file, or changed line range, combining definitions, references, callers, callees, tests, docs, CMake target associations, confidence, and notes.
 - C-family structural fallback via tree-sitter and lexical scanning.
 - Ranked `context-pack` output for a symbol or file line, combining definitions, imports/includes, callers, references, nearby tests, docs, CMake metadata, diagnostics, and notes under an approximate source-character budget.
 - Normalized diagnostics from `cargo check --message-format=json`, clangd LSP, Ruff, mypy, Pyright, and CMake configure/build output.
@@ -172,6 +176,8 @@ Related test records from `tests-for` include the candidate test location, heuri
 ```
 
 `tests-for` is heuristic. Verify the reported matches before treating them as exhaustive.
+
+`impact --json` emits a grouped report with `subject`, `definitions`, `references`, `callers`, `callees`, `tests`, `docs`, `build_targets`, `diagnostics`, `confidence`, and `notes`. Each entry includes `path`, `start_line`, `end_line`, `language`, `backend`, `kind`, `name`, `qualified_name`, `reason`, and `source`.
 
 Navigation records from `definition`, `type-of`, and `hover` include line and column ranges:
 
