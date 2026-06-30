@@ -930,6 +930,163 @@ fn references_and_callers_work() {
 }
 
 #[test]
+fn definition_name_finds_python_structural_symbol() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "definition",
+            "--name",
+            "helper",
+            "--lang",
+            "python",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""kind": "definition""#))
+        .stdout(predicate::str::contains("def helper"));
+}
+
+#[test]
+fn definition_position_finds_python_structural_symbol() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "definition",
+            "--file",
+            "sample.py",
+            "--line",
+            "17",
+            "--column",
+            "12",
+            "--lang",
+            "python",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("def helper"));
+}
+
+#[test]
+fn definition_name_finds_python_import() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "definition",
+            "--name",
+            "Path",
+            "--lang",
+            "python",
+            "--json",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""kind": "definition""#))
+        .stdout(predicate::str::contains("from pathlib import Path"));
+}
+
+#[test]
+fn type_of_python_is_best_effort() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "type-of", "--name", "CONFIG", "--lang", "python", "--json", "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""kind": "type""#))
+        .stdout(predicate::str::contains("best-effort"));
+}
+
+#[test]
+fn navigation_position_requires_column() {
+    let dir = fixture();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "definition",
+            "--file",
+            "sample.py",
+            "--line",
+            "17",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("--file, --line, and --column"));
+}
+
+#[test]
+fn explicit_lsp_definition_exits_three_when_clangd_missing() {
+    let dir = fixture();
+    let mut command = Command::cargo_bin("codescope").unwrap();
+    command.env("PATH", "");
+    command
+        .args([
+            "definition",
+            "--file",
+            "sample.cpp",
+            "--line",
+            "18",
+            "--column",
+            "5",
+            "--backend",
+            "lsp",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .code(3);
+}
+
+#[test]
+fn lsp_definition_runs_when_clangd_is_available() {
+    if which::which("clangd").is_err() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("simple.cpp"),
+        "int helper() { return 1; }\nint caller() { return helper(); }\n",
+    )
+    .unwrap();
+    Command::cargo_bin("codescope")
+        .unwrap()
+        .args([
+            "definition",
+            "--file",
+            "simple.cpp",
+            "--line",
+            "2",
+            "--column",
+            "23",
+            "--backend",
+            "lsp",
+            "--lang",
+            "cpp",
+            "--path",
+        ])
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("clangd"));
+}
+
+#[test]
 fn context_includes_imports() {
     let dir = fixture();
     Command::cargo_bin("codescope")

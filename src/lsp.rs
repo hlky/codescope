@@ -7,7 +7,9 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::diagnostics::{DiagnosticRecord, DiagnosticSeverity, RelatedDiagnostic};
-use crate::model::{Language, Symbol, SymbolKind, SymbolKindFilter, kind_matches, name_matches};
+use crate::model::{
+    Language, NavigationRecord, Symbol, SymbolKind, SymbolKindFilter, kind_matches, name_matches,
+};
 use crate::workspace::{language_for_path, line_slice, read_text};
 
 pub struct ClangdOptions {
@@ -183,6 +185,61 @@ pub fn diagnostics(
     Ok(out)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NavigationRequest {
+    Definition,
+    TypeOf,
+    Hover,
+}
+
+pub fn navigate_name(
+    files: &[(PathBuf, String)],
+    options: &ClangdOptions,
+    request: NavigationRequest,
+    wanted: &str,
+    max_matches: usize,
+) -> anyhow::Result<Vec<NavigationRecord>> {
+    let mut client = ClangdClient::start(options)?;
+    let mut out = Vec::new();
+    for (path, text) in files {
+        let positions = client.symbol_positions_for_file(path, text, wanted)?;
+        for (uri, line, character) in positions {
+            out.extend(client.navigate_at(&uri, line, character, request, wanted)?);
+            if out.len() >= max_matches {
+                client.shutdown();
+                out.truncate(max_matches);
+                return Ok(out);
+            }
+        }
+    }
+    client.shutdown();
+    out.truncate(max_matches);
+    Ok(out)
+}
+
+pub fn navigate_position(
+    path: &Path,
+    text: &str,
+    options: &ClangdOptions,
+    request: NavigationRequest,
+    line: usize,
+    column: usize,
+) -> anyhow::Result<Vec<NavigationRecord>> {
+    let mut client = ClangdClient::start(options)?;
+    let uri = uri_for_path(path)?;
+    client.open(path, text, &uri)?;
+    let out = client.navigate_at(
+        &uri,
+        line.saturating_sub(1),
+        column.saturating_sub(1),
+        request,
+        "",
+    )?;
+    client.close(&uri)?;
+    client.shutdown();
+    Ok(out)
+}
+
 struct ClangdClient {
     child: Child,
     stdin: ChildStdin,
@@ -265,7 +322,6 @@ impl ClangdClient {
                 );
             }
         }
-        self.close(&uri)?;
         Ok(out)
     }
 
@@ -302,6 +358,44 @@ impl ClangdClient {
         )?;
         self.close(&uri)?;
         Ok(result)
+    }
+
+    fn navigate_at(
+        &mut self,
+        uri: &str,
+        line: usize,
+        character: usize,
+        request: NavigationRequest,
+        fallback_name: &str,
+    ) -> anyhow::Result<Vec<NavigationRecord>> {
+        let params = json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        });
+        match request {
+            NavigationRequest::Definition | NavigationRequest::TypeOf => {
+                let method = match request {
+                    NavigationRequest::Definition => "textDocument/definition",
+                    NavigationRequest::TypeOf => "textDocument/typeDefinition",
+                    NavigationRequest::Hover => unreachable!(),
+                };
+                let result = self.request(method, params)?;
+                Ok(locations_to_navigation_records(
+                    &result,
+                    match request {
+                        NavigationRequest::Definition => SymbolKind::Definition,
+                        NavigationRequest::TypeOf => SymbolKind::Type,
+                        NavigationRequest::Hover => unreachable!(),
+                    },
+                    fallback_name,
+                    "",
+                ))
+            }
+            NavigationRequest::Hover => {
+                let result = self.request("textDocument/hover", params)?;
+                Ok(hover_to_navigation_records(uri, &result, fallback_name))
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -633,6 +727,120 @@ fn call_hierarchy_item_to_symbol(item: &Value) -> Option<Symbol> {
         symbol_short_name(&name),
         qualified,
     )
+}
+
+fn locations_to_navigation_records(
+    value: &Value,
+    kind: SymbolKind,
+    fallback_name: &str,
+    detail: &str,
+) -> Vec<NavigationRecord> {
+    let locations = match value {
+        Value::Array(items) => items.iter().collect::<Vec<_>>(),
+        Value::Object(_) => vec![value],
+        _ => Vec::new(),
+    };
+    locations
+        .into_iter()
+        .filter_map(|location| {
+            let uri = location
+                .get("uri")
+                .or_else(|| location.get("targetUri"))
+                .and_then(Value::as_str)?;
+            let path = path_from_uri(uri)?;
+            let range = location
+                .get("range")
+                .or_else(|| location.get("targetSelectionRange"))
+                .or_else(|| location.get("targetRange"))?;
+            let mut record = navigation_record_from_range(&path, range, kind, fallback_name)?;
+            record.detail = detail.to_string();
+            Some(record)
+        })
+        .collect()
+}
+
+fn hover_to_navigation_records(
+    uri: &str,
+    value: &Value,
+    fallback_name: &str,
+) -> Vec<NavigationRecord> {
+    let Some(path) = path_from_uri(uri) else {
+        return Vec::new();
+    };
+    let detail = hover_contents(value.get("contents").unwrap_or(&Value::Null));
+    if detail.is_empty() {
+        return Vec::new();
+    }
+    let range = value.get("range");
+    let mut record = range
+        .and_then(|range| {
+            navigation_record_from_range(&path, range, SymbolKind::Definition, fallback_name)
+        })
+        .unwrap_or_else(|| {
+            let text = read_text(&path).unwrap_or_default();
+            NavigationRecord::new(
+                path.clone(),
+                language_for_path(&path).unwrap_or(Language::Text),
+                "clangd",
+                SymbolKind::Definition,
+                fallback_name,
+                fallback_name,
+                1,
+                1,
+                1,
+                1,
+                line_slice(&text, 1, 1),
+            )
+        });
+    record.detail = detail;
+    vec![record]
+}
+
+fn navigation_record_from_range(
+    path: &Path,
+    range: &Value,
+    kind: SymbolKind,
+    fallback_name: &str,
+) -> Option<NavigationRecord> {
+    let start_line = lsp_position(range.pointer("/start/line").and_then(Value::as_u64));
+    let start_column = lsp_position(range.pointer("/start/character").and_then(Value::as_u64));
+    let end_line = lsp_position(range.pointer("/end/line").and_then(Value::as_u64));
+    let end_column = lsp_position(range.pointer("/end/character").and_then(Value::as_u64));
+    let text = read_text(path).unwrap_or_default();
+    let source = line_slice(&text, start_line, end_line);
+    Some(NavigationRecord::new(
+        path.to_path_buf(),
+        language_for_path(path).unwrap_or(Language::Text),
+        "clangd",
+        kind,
+        fallback_name,
+        fallback_name,
+        start_line,
+        start_column,
+        end_line,
+        end_column,
+        source,
+    ))
+}
+
+fn hover_contents(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.trim().to_string(),
+        Value::Object(map) => {
+            if let Some(value) = map.get("value").and_then(Value::as_str) {
+                value.trim().to_string()
+            } else {
+                String::new()
+            }
+        }
+        Value::Array(items) => items
+            .iter()
+            .map(hover_contents)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
 }
 
 fn published_diagnostics_to_records(message: &Value) -> Vec<DiagnosticRecord> {

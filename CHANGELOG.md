@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.10 - 2026-06-30
+
+- Added `definition`, `type-of`, and `hover` navigation commands with clangd-backed C-family position lookup, Python structural definition fallback, JSON column ranges, tests, docs, and skill guidance.
+
 ## v0.1.9 - 2026-06-30
 
 - Added `context-pack` for ranked symbol or line-based editing context with JSON output, budget-based whole-item omission, tests/docs/build/diagnostics hooks, and skill guidance.

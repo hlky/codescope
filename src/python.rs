@@ -82,6 +82,19 @@ pub fn callers(path: &Path, text: &str, wanted: &str, max_matches: usize) -> Vec
         .collect()
 }
 
+pub fn import_symbols(path: &Path, text: &str, wanted: Option<&str>) -> Vec<Symbol> {
+    let Some(tree) = parse(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    visit_all(tree.root_node(), &mut |node| {
+        if matches!(node.kind(), "import_statement" | "import_from_statement") {
+            add_imports(path, text, node, None, wanted, &mut out);
+        }
+    });
+    out
+}
+
 fn parse(text: &str) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
     parser
@@ -243,6 +256,61 @@ fn visit_body(
             wanted,
             out,
         );
+    }
+}
+
+fn add_imports(
+    path: &Path,
+    text: &str,
+    node: Node<'_>,
+    kind_filter: Option<SymbolKindFilter>,
+    wanted: Option<&str>,
+    out: &mut Vec<Symbol>,
+) {
+    if !crate::model::kind_matches(kind_filter, SymbolKind::Import) {
+        return;
+    }
+    let mut names = Vec::new();
+    collect_import_names(node, text, &mut names);
+    names.sort();
+    names.dedup();
+    for qualified in names {
+        let name = qualified
+            .rsplit('.')
+            .next()
+            .unwrap_or(&qualified)
+            .to_string();
+        if wanted.is_some_and(|wanted| !name_matches(wanted, &name, &qualified, ".")) {
+            continue;
+        }
+        let start_line = node.start_position().row + 1;
+        let end_line = node.end_position().row + 1;
+        out.push(Symbol::new(
+            path.to_path_buf(),
+            Language::Python,
+            "tree-sitter",
+            SymbolKind::Import,
+            name,
+            qualified,
+            start_line,
+            end_line,
+            line_slice(text, start_line, end_line),
+        ));
+    }
+}
+
+fn collect_import_names(node: Node<'_>, text: &str, names: &mut Vec<String>) {
+    if matches!(node.kind(), "dotted_name" | "identifier")
+        && let Some(value) = node_text(node, text)
+        && value != "import"
+        && value != "from"
+        && value != "as"
+    {
+        names.push(value);
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        collect_import_names(child, text, names);
     }
 }
 

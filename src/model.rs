@@ -65,11 +65,14 @@ pub enum SymbolKindFilter {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SymbolKind {
+    Definition,
+    Type,
     Function,
     Class,
     Struct,
     Enum,
     Variable,
+    Import,
     Target,
     Block,
     Heading,
@@ -79,11 +82,14 @@ pub enum SymbolKind {
 impl fmt::Display for SymbolKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
+            Self::Definition => "definition",
+            Self::Type => "type",
             Self::Function => "function",
             Self::Class => "class",
             Self::Struct => "struct",
             Self::Enum => "enum",
             Self::Variable => "variable",
+            Self::Import => "import",
             Self::Target => "target",
             Self::Block => "block",
             Self::Heading => "heading",
@@ -154,6 +160,73 @@ impl Symbol {
             end_line,
             source: source.into(),
             detail: String::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NavigationRecord {
+    #[serde(serialize_with = "crate::path_display::serialize")]
+    pub path: PathBuf,
+    pub language: Language,
+    pub backend: String,
+    pub kind: SymbolKind,
+    pub name: String,
+    pub qualified_name: String,
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub source: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+}
+
+impl NavigationRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        path: PathBuf,
+        language: Language,
+        backend: impl Into<String>,
+        kind: SymbolKind,
+        name: impl Into<String>,
+        qualified_name: impl Into<String>,
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            path,
+            language,
+            backend: backend.into(),
+            kind,
+            name: name.into(),
+            qualified_name: qualified_name.into(),
+            start_line,
+            start_column,
+            end_line,
+            end_column,
+            source: source.into(),
+            detail: String::new(),
+        }
+    }
+
+    pub fn from_symbol(symbol: Symbol, start_column: usize, end_column: usize) -> Self {
+        Self {
+            path: symbol.path,
+            language: symbol.language,
+            backend: symbol.backend,
+            kind: symbol.kind,
+            name: symbol.name,
+            qualified_name: symbol.qualified_name,
+            start_line: symbol.start_line,
+            start_column,
+            end_line: symbol.end_line,
+            end_column,
+            source: symbol.source,
+            detail: symbol.detail,
         }
     }
 }

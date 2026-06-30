@@ -17,6 +17,10 @@ codescope list-headings --path docs
 codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
+codescope definition --name Foo --path .
+codescope definition --file src/foo.cpp --line 42 --column 17 --backend lsp
+codescope type-of --file src/foo.py --line 42 --column 12 --json
+codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json
 codescope context --name foo --path .
 codescope context-pack --name foo --path .
 codescope context-pack --file src/foo.py --around-line 80 --path .
@@ -41,6 +45,21 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 - `--backend auto|lsp|tree-sitter|lexical`: choose backend behavior.
 - `--root PATH`: set project root for clangd.
 - `--compile-commands-dir PATH`: pass a compilation database directory to clangd.
+
+## Navigation
+
+`definition`, `type-of`, and `hover` provide focused IDE-style navigation without opening broad files:
+
+```bash
+codescope definition --name helper --lang python --path .
+codescope definition --file src/foo.cpp --line 42 --column 17 --backend lsp --path .
+codescope type-of --file src/foo.py --line 42 --column 12 --json --path .
+codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json --path .
+```
+
+Use either `--name` or the complete position form `--file --line --column`. Lines and columns are 1-based. C-family position navigation uses clangd; explicit `--backend lsp` exits with code `3` when clangd cannot run. Python uses structural tree-sitter lookup for definitions of functions, classes, variables, and imports; `type-of` and `hover` are best-effort until a semantic Python backend is available.
+
+Plain output includes the resolved source snippet and any detail text. JSON navigation records include `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `start_column`, `end_line`, `end_column`, `source`, and optional `detail`.
 
 ## Context Packs
 
@@ -129,7 +148,7 @@ codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path 
 
 Python uses tree-sitter for tolerant structural parsing.
 
-C-family files use clangd in `auto` when available, then fall back to tree-sitter. `--backend lsp` requires clangd and exits non-zero if clangd cannot run. `--backend lexical` is a rough fallback for functions, types, variables, and references.
+C-family files use clangd in `auto` when available, then fall back to tree-sitter. `--backend lsp` requires clangd and exits non-zero if clangd cannot run. `--backend lexical` is a rough fallback for functions, types, variables, and references. `definition`, `type-of`, and `hover` use clangd for precise C-family position navigation.
 
 Markdown uses tree-sitter for block parsing. `list-headings` returns heading records with qualified names based on heading nesting. `extract-section` returns the heading and its content until the next heading at the same or higher level. Fenced code headings are ignored by the parser.
 

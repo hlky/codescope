@@ -7,8 +7,8 @@ use clap::{Args, Parser, Subcommand, error::ErrorKind};
 use crate::context::add_import_context;
 use crate::context_pack::{ContextPack, ContextPackItem};
 use crate::diagnostics::{DiagnosticOptions, DiagnosticRecord, DiagnosticTool};
-use crate::lsp::ClangdOptions;
-use crate::model::{Backend, Language, Symbol, SymbolKindFilter};
+use crate::lsp::{ClangdOptions, NavigationRequest};
+use crate::model::{Backend, Language, NavigationRecord, Symbol, SymbolKind, SymbolKindFilter};
 use crate::replace::{Pattern, ReplaceOptions, Replacement};
 use crate::workspace::{language_for_path, line_slice, read_text, source_files};
 
@@ -39,6 +39,9 @@ enum Command {
     ExtractVariable(VariableArgs),
     References(NamedArgs),
     Callers(NamedArgs),
+    Definition(NavigationArgs),
+    TypeOf(NavigationArgs),
+    Hover(NavigationArgs),
     Context(ContextArgs),
     ContextPack(ContextPackArgs),
     ReplaceText(ReplaceTextArgs),
@@ -263,6 +266,20 @@ struct DiagnosticsArgs {
     max_matches: usize,
 }
 
+#[derive(Args, Clone, Debug)]
+struct NavigationArgs {
+    #[command(flatten)]
+    common: CommonArgs,
+    #[arg(long)]
+    name: Option<String>,
+    #[arg(long)]
+    file: Option<PathBuf>,
+    #[arg(long)]
+    line: Option<usize>,
+    #[arg(long)]
+    column: Option<usize>,
+}
+
 pub fn run() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -333,6 +350,24 @@ pub fn run() -> ExitCode {
             }
             ExitCode::from(EXIT_FOUND)
         }
+        Ok(RunOutput::Navigation { records, json }) => {
+            if records.is_empty() {
+                return ExitCode::from(EXIT_NO_MATCH);
+            }
+            let rendered = if json {
+                match crate::output::navigation_json(&records) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!("{error:#}");
+                        return ExitCode::from(EXIT_CONFIG);
+                    }
+                }
+            } else {
+                crate::output::navigation_plain(&records)
+            };
+            println!("{rendered}");
+            ExitCode::from(EXIT_FOUND)
+        }
         Ok(RunOutput::ContextPack { pack, json }) => {
             if pack.items.is_empty() {
                 return ExitCode::from(EXIT_NO_MATCH);
@@ -373,6 +408,10 @@ enum RunOutput {
         records: Vec<DiagnosticRecord>,
         json: bool,
         backend_failed: bool,
+    },
+    Navigation {
+        records: Vec<NavigationRecord>,
+        json: bool,
     },
     ContextPack {
         pack: ContextPack,
@@ -505,6 +544,9 @@ fn run_inner(cli: Cli) -> Result<RunOutput, AppError> {
             symbols.truncate(args.common.max_matches);
             Ok(symbols_output(symbols, args.common.json, true))
         }
+        Command::Definition(args) => run_navigation(args, NavigationRequest::Definition),
+        Command::TypeOf(args) => run_navigation(args, NavigationRequest::TypeOf),
+        Command::Hover(args) => run_navigation(args, NavigationRequest::Hover),
         Command::Context(args) => {
             let filter = if args.kind == SymbolKindFilter::All {
                 None
@@ -602,6 +644,283 @@ fn run_context_pack(args: ContextPackArgs) -> Result<RunOutput, AppError> {
         pack,
         json: args.common.json,
     })
+}
+
+fn run_navigation(args: NavigationArgs, request: NavigationRequest) -> Result<RunOutput, AppError> {
+    let records = match navigation_query(&args)? {
+        NavigationQuery::Name(name) => collect_navigation_by_name(&args.common, request, &name)?,
+        NavigationQuery::Position { file, line, column } => {
+            collect_navigation_by_position(&args.common, request, &file, line, column)?
+        }
+    };
+    let mut records = dedupe_navigation(records);
+    records.truncate(args.common.max_matches);
+    Ok(RunOutput::Navigation {
+        records,
+        json: args.common.json,
+    })
+}
+
+enum NavigationQuery {
+    Name(String),
+    Position {
+        file: PathBuf,
+        line: usize,
+        column: usize,
+    },
+}
+
+fn navigation_query(args: &NavigationArgs) -> Result<NavigationQuery, AppError> {
+    match (&args.name, &args.file, args.line, args.column) {
+        (Some(name), None, None, None) => Ok(NavigationQuery::Name(name.clone())),
+        (None, Some(file), Some(line), Some(column)) => {
+            if line == 0 || column == 0 {
+                return Err(AppError::Config(anyhow::anyhow!(
+                    "--line and --column are 1-based and must be greater than zero"
+                )));
+            }
+            Ok(NavigationQuery::Position {
+                file: file.clone(),
+                line,
+                column,
+            })
+        }
+        (Some(_), Some(_), _, _) => Err(AppError::Config(anyhow::anyhow!(
+            "navigation accepts either --name or --file --line --column, not both"
+        ))),
+        (Some(_), None, _, _) => Err(AppError::Config(anyhow::anyhow!(
+            "--name cannot be combined with --line or --column"
+        ))),
+        (None, Some(_), _, _) => Err(AppError::Config(anyhow::anyhow!(
+            "position-based navigation requires --file, --line, and --column"
+        ))),
+        (None, None, _, _) => Err(AppError::Config(anyhow::anyhow!(
+            "navigation requires --name or --file --line --column"
+        ))),
+    }
+}
+
+fn collect_navigation_by_name(
+    common: &CommonArgs,
+    request: NavigationRequest,
+    name: &str,
+) -> Result<Vec<NavigationRecord>, AppError> {
+    let path = common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
+        .map_err(AppError::Config)?;
+    let mut out = Vec::new();
+    let mut c_family = Vec::new();
+    for file in source_files(&path, common.lang) {
+        let Some(text) = read_text(&file) else {
+            continue;
+        };
+        match language_for_path(&file) {
+            Some(Language::Python) => {
+                out.extend(python_navigation_records(
+                    &file,
+                    &text,
+                    request,
+                    name,
+                    common.max_matches - out.len(),
+                ));
+            }
+            Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
+                c_family.push((file, text));
+            }
+            _ => {}
+        }
+        if out.len() >= common.max_matches {
+            return Ok(out);
+        }
+    }
+
+    if !c_family.is_empty() && out.len() < common.max_matches {
+        let options = clangd_options(common, &path)?;
+        if common.backend == Backend::Lsp {
+            out.extend(
+                crate::lsp::navigate_name(
+                    &c_family,
+                    &options,
+                    request,
+                    name,
+                    common.max_matches - out.len(),
+                )
+                .map_err(AppError::Backend)?,
+            );
+        } else if common.backend == Backend::Auto
+            && crate::lsp::clangd_available()
+            && let Ok(records) = crate::lsp::navigate_name(
+                &c_family,
+                &options,
+                request,
+                name,
+                common.max_matches - out.len(),
+            )
+        {
+            out.extend(records);
+        } else if request == NavigationRequest::Definition {
+            for (file, text) in &c_family {
+                out.extend(
+                    crate::cfamily::symbols(file, text, Backend::TreeSitter, None, Some(name))
+                        .map_err(AppError::Backend)?
+                        .into_iter()
+                        .map(|symbol| NavigationRecord::from_symbol(symbol, 1, 1)),
+                );
+                if out.len() >= common.max_matches {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn collect_navigation_by_position(
+    common: &CommonArgs,
+    request: NavigationRequest,
+    file: &PathBuf,
+    line: usize,
+    column: usize,
+) -> Result<Vec<NavigationRecord>, AppError> {
+    let base = common
+        .path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve --path {}", common.path.display()))
+        .map_err(AppError::Config)?;
+    let path = if file.is_absolute() {
+        file.clone()
+    } else if base.is_file() {
+        base.parent()
+            .map(|parent| parent.join(file))
+            .unwrap_or_else(|| file.clone())
+    } else {
+        base.join(file)
+    }
+    .canonicalize()
+    .with_context(|| format!("failed to resolve --file {}", file.display()))
+    .map_err(AppError::Config)?;
+    let text = read_text(&path).ok_or_else(|| {
+        AppError::Config(anyhow::anyhow!("failed to read --file {}", path.display()))
+    })?;
+    match language_for_path(&path) {
+        Some(Language::Python) => {
+            let Some(name) = token_at_position(&text, line, column) else {
+                return Ok(Vec::new());
+            };
+            Ok(python_navigation_records(
+                &path,
+                &text,
+                request,
+                &name,
+                common.max_matches,
+            ))
+        }
+        Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
+            let options = clangd_options(common, &base)?;
+            crate::lsp::navigate_position(&path, &text, &options, request, line, column)
+                .map_err(AppError::Backend)
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn python_navigation_records(
+    path: &std::path::Path,
+    text: &str,
+    request: NavigationRequest,
+    name: &str,
+    max_matches: usize,
+) -> Vec<NavigationRecord> {
+    let mut symbols = crate::python::symbols(path, text, None, Some(name));
+    if request == NavigationRequest::Definition {
+        symbols.extend(crate::python::import_symbols(path, text, Some(name)));
+    }
+    let mut records = symbols
+        .into_iter()
+        .map(|symbol| {
+            let mut record =
+                NavigationRecord::from_symbol(symbol, 1, line_len(text, name).unwrap_or(1).max(1));
+            match request {
+                NavigationRequest::Definition => {
+                    record.kind = SymbolKind::Definition;
+                }
+                NavigationRequest::TypeOf => {
+                    record.kind = SymbolKind::Type;
+                    record.detail =
+                        "python type information is best-effort; structural definition shown"
+                            .to_string();
+                }
+                NavigationRequest::Hover => {
+                    record.kind = SymbolKind::Definition;
+                    record.detail = format!(
+                        "{} {}",
+                        record.kind,
+                        if record.qualified_name.is_empty() {
+                            &record.name
+                        } else {
+                            &record.qualified_name
+                        }
+                    );
+                }
+            }
+            record
+        })
+        .collect::<Vec<_>>();
+    records.truncate(max_matches);
+    records
+}
+
+fn token_at_position(text: &str, line: usize, column: usize) -> Option<String> {
+    let line_text = text.lines().nth(line.checked_sub(1)?)?;
+    let chars = line_text.chars().collect::<Vec<_>>();
+    let mut idx = column.saturating_sub(1).min(chars.len().saturating_sub(1));
+    if chars.is_empty() {
+        return None;
+    }
+    if !is_name_char(chars[idx]) && idx > 0 {
+        idx -= 1;
+    }
+    if !is_name_char(chars[idx]) {
+        return None;
+    }
+    let mut start = idx;
+    while start > 0 && is_name_char(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = idx + 1;
+    while end < chars.len() && is_name_char(chars[end]) {
+        end += 1;
+    }
+    Some(chars[start..end].iter().collect())
+}
+
+fn is_name_char(ch: char) -> bool {
+    ch == '_' || ch == '.' || ch.is_ascii_alphanumeric()
+}
+
+fn line_len(text: &str, name: &str) -> Option<usize> {
+    text.lines()
+        .find(|line| line.contains(name))
+        .map(|line| line.chars().count())
+}
+
+fn dedupe_navigation(records: Vec<NavigationRecord>) -> Vec<NavigationRecord> {
+    let mut out = Vec::new();
+    for record in records {
+        if !out.iter().any(|existing: &NavigationRecord| {
+            existing.path == record.path
+                && existing.start_line == record.start_line
+                && existing.start_column == record.start_column
+                && existing.end_line == record.end_line
+                && existing.end_column == record.end_column
+                && existing.kind == record.kind
+        }) {
+            out.push(record);
+        }
+    }
+    out
 }
 
 fn context_pack_subject(args: &ContextPackArgs) -> Result<String, AppError> {

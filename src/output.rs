@@ -1,4 +1,4 @@
-use crate::model::Symbol;
+use crate::model::{NavigationRecord, Symbol};
 use crate::path_display::display_path;
 
 pub fn json(symbols: &[Symbol]) -> anyhow::Result<String> {
@@ -38,6 +38,38 @@ pub fn with_source(symbols: &[Symbol]) -> String {
                 symbol.kind,
                 symbol.qualified_name,
                 symbol.source.trim_end()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub fn navigation_json(records: &[NavigationRecord]) -> anyhow::Result<String> {
+    Ok(serde_json::to_string_pretty(records)?)
+}
+
+pub fn navigation_plain(records: &[NavigationRecord]) -> String {
+    records
+        .iter()
+        .map(|record| {
+            let detail = if record.detail.is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", record.detail.trim_end())
+            };
+            format!(
+                "// {}:{}:{}-{}:{} ({}, {}, {}, {}){}\n{}\n",
+                display_path(&record.path),
+                record.start_line,
+                record.start_column,
+                record.end_line,
+                record.end_column,
+                record.language,
+                record.backend,
+                record.kind,
+                record.qualified_name,
+                detail,
+                record.source.trim_end()
             )
         })
         .collect::<Vec<_>>()
