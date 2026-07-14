@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.20 - 2026-07-14
+
+- Restored the focused v0.1.1 command surface after later features made agent usage less predictable.
+- Ensured clangd child processes are terminated and reaped when LSP operations fail or are interrupted.
+
 ## v0.1.19 - 2026-06-30
 
 - Fixed `list-headings` to list all Markdown headings by default instead of silently stopping at the shared default match cap, while still honoring explicit `--max-matches`.

@@ -2,27 +2,16 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context, anyhow};
 use serde_json::{Value, json};
 use url::Url;
 
-use crate::diagnostics::{DiagnosticRecord, DiagnosticSeverity, RelatedDiagnostic};
-use crate::model::{
-    Language, NavigationRecord, Symbol, SymbolKind, SymbolKindFilter, kind_matches, name_matches,
-};
+use crate::model::{Language, Symbol, SymbolKind, SymbolKindFilter, kind_matches, name_matches};
 use crate::workspace::{language_for_path, line_slice, read_text};
 
 pub struct ClangdOptions {
     pub root: PathBuf,
     pub compile_commands_dir: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TextEdit {
-    pub path: PathBuf,
-    pub start: usize,
-    pub end: usize,
-    pub replacement: String,
 }
 
 pub fn clangd_available() -> bool {
@@ -116,41 +105,6 @@ pub fn references(
     Ok(out)
 }
 
-pub fn rename(
-    files: &[(PathBuf, String)],
-    options: &ClangdOptions,
-    wanted: &str,
-    replacement: &str,
-) -> anyhow::Result<Vec<TextEdit>> {
-    let mut client = ClangdClient::start(options)?;
-    let mut positions = Vec::new();
-    for (path, text) in files {
-        positions.extend(client.symbol_positions_for_file(path, text, wanted)?);
-    }
-    if positions.is_empty() {
-        client.shutdown();
-        bail!("clangd could not find symbol {wanted} for semantic rename");
-    }
-    if positions.len() > 1 {
-        client.shutdown();
-        bail!(
-            "clangd found multiple candidate definitions for {wanted}; semantic rename is ambiguous"
-        );
-    }
-    let (uri, line, character) = positions.remove(0);
-    let result = client.request(
-        "textDocument/rename",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-            "newName": replacement
-        }),
-    )?;
-    let edits = workspace_edit_to_text_edits(&result)?;
-    client.shutdown();
-    Ok(edits)
-}
-
 pub fn callers(
     files: &[(PathBuf, String)],
     options: &ClangdOptions,
@@ -205,80 +159,6 @@ pub fn callers(
             }
         }
     }
-    client.shutdown();
-    Ok(out)
-}
-
-pub fn diagnostics(
-    files: &[(PathBuf, String)],
-    options: &ClangdOptions,
-    max_matches: usize,
-) -> anyhow::Result<Vec<DiagnosticRecord>> {
-    let mut client = ClangdClient::start(options)?;
-    let mut out = Vec::new();
-    for (path, text) in files {
-        let mut file_records = client.diagnostics_for_file(path, text)?;
-        out.append(&mut file_records);
-        if out.len() >= max_matches {
-            break;
-        }
-    }
-    client.shutdown();
-    out.truncate(max_matches);
-    Ok(out)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NavigationRequest {
-    Definition,
-    TypeOf,
-    Hover,
-}
-
-pub fn navigate_name(
-    files: &[(PathBuf, String)],
-    options: &ClangdOptions,
-    request: NavigationRequest,
-    wanted: &str,
-    max_matches: usize,
-) -> anyhow::Result<Vec<NavigationRecord>> {
-    let mut client = ClangdClient::start(options)?;
-    let mut out = Vec::new();
-    for (path, text) in files {
-        let positions = client.symbol_positions_for_file(path, text, wanted)?;
-        for (uri, line, character) in positions {
-            out.extend(client.navigate_at(&uri, line, character, request, wanted)?);
-            if out.len() >= max_matches {
-                client.shutdown();
-                out.truncate(max_matches);
-                return Ok(out);
-            }
-        }
-    }
-    client.shutdown();
-    out.truncate(max_matches);
-    Ok(out)
-}
-
-pub fn navigate_position(
-    path: &Path,
-    text: &str,
-    options: &ClangdOptions,
-    request: NavigationRequest,
-    line: usize,
-    column: usize,
-) -> anyhow::Result<Vec<NavigationRecord>> {
-    let mut client = ClangdClient::start(options)?;
-    let uri = uri_for_path(path)?;
-    client.open(path, text, &uri)?;
-    let out = client.navigate_at(
-        &uri,
-        line.saturating_sub(1),
-        column.saturating_sub(1),
-        request,
-        "",
-    )?;
-    client.close(&uri)?;
     client.shutdown();
     Ok(out)
 }
@@ -365,6 +245,7 @@ impl ClangdClient {
                 );
             }
         }
+        self.close(&uri)?;
         Ok(out)
     }
 
@@ -385,60 +266,6 @@ impl ClangdClient {
             self.visit_positions(&uri, symbols, &mut Vec::new(), wanted, &mut out);
         }
         Ok(out)
-    }
-
-    fn diagnostics_for_file(
-        &mut self,
-        path: &Path,
-        text: &str,
-    ) -> anyhow::Result<Vec<DiagnosticRecord>> {
-        let uri = uri_for_path(path)?;
-        self.open(path, text, &uri)?;
-        let result = self.request_collecting_diagnostics(
-            "textDocument/documentSymbol",
-            json!({ "textDocument": { "uri": uri } }),
-            &uri,
-        )?;
-        self.close(&uri)?;
-        Ok(result)
-    }
-
-    fn navigate_at(
-        &mut self,
-        uri: &str,
-        line: usize,
-        character: usize,
-        request: NavigationRequest,
-        fallback_name: &str,
-    ) -> anyhow::Result<Vec<NavigationRecord>> {
-        let params = json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        });
-        match request {
-            NavigationRequest::Definition | NavigationRequest::TypeOf => {
-                let method = match request {
-                    NavigationRequest::Definition => "textDocument/definition",
-                    NavigationRequest::TypeOf => "textDocument/typeDefinition",
-                    NavigationRequest::Hover => unreachable!(),
-                };
-                let result = self.request(method, params)?;
-                Ok(locations_to_navigation_records(
-                    &result,
-                    match request {
-                        NavigationRequest::Definition => SymbolKind::Definition,
-                        NavigationRequest::TypeOf => SymbolKind::Type,
-                        NavigationRequest::Hover => unreachable!(),
-                    },
-                    fallback_name,
-                    "",
-                ))
-            }
-            NavigationRequest::Hover => {
-                let result = self.request("textDocument/hover", params)?;
-                Ok(hover_to_navigation_records(uri, &result, fallback_name))
-            }
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -632,33 +459,6 @@ impl ClangdClient {
         }
     }
 
-    fn request_collecting_diagnostics(
-        &mut self,
-        method: &str,
-        params: Value,
-        uri: &str,
-    ) -> anyhow::Result<Vec<DiagnosticRecord>> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
-        let mut out = Vec::new();
-        loop {
-            let message = self.read_message()?;
-            if message.get("id").and_then(Value::as_u64) == Some(id) {
-                if let Some(error) = message.get("error") {
-                    return Err(anyhow!("clangd {method} failed: {error}"));
-                }
-                return Ok(out);
-            }
-            if message.get("method").and_then(Value::as_str)
-                == Some("textDocument/publishDiagnostics")
-                && message.pointer("/params/uri").and_then(Value::as_str) == Some(uri)
-            {
-                out.extend(published_diagnostics_to_records(&message));
-            }
-        }
-    }
-
     fn notify(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
         self.send(json!({ "jsonrpc": "2.0", "method": method, "params": params }))
     }
@@ -695,7 +495,18 @@ impl ClangdClient {
     fn shutdown(&mut self) {
         let _ = self.request("shutdown", json!({}));
         let _ = self.notify("exit", json!({}));
+        self.terminate();
+    }
+
+    fn terminate(&mut self) {
         let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for ClangdClient {
+    fn drop(&mut self) {
+        self.terminate();
     }
 }
 
@@ -772,311 +583,6 @@ fn call_hierarchy_item_to_symbol(item: &Value) -> Option<Symbol> {
     )
 }
 
-fn locations_to_navigation_records(
-    value: &Value,
-    kind: SymbolKind,
-    fallback_name: &str,
-    detail: &str,
-) -> Vec<NavigationRecord> {
-    let locations = match value {
-        Value::Array(items) => items.iter().collect::<Vec<_>>(),
-        Value::Object(_) => vec![value],
-        _ => Vec::new(),
-    };
-    locations
-        .into_iter()
-        .filter_map(|location| {
-            let uri = location
-                .get("uri")
-                .or_else(|| location.get("targetUri"))
-                .and_then(Value::as_str)?;
-            let path = path_from_uri(uri)?;
-            let range = location
-                .get("range")
-                .or_else(|| location.get("targetSelectionRange"))
-                .or_else(|| location.get("targetRange"))?;
-            let mut record = navigation_record_from_range(&path, range, kind, fallback_name)?;
-            record.detail = detail.to_string();
-            Some(record)
-        })
-        .collect()
-}
-
-fn hover_to_navigation_records(
-    uri: &str,
-    value: &Value,
-    fallback_name: &str,
-) -> Vec<NavigationRecord> {
-    let Some(path) = path_from_uri(uri) else {
-        return Vec::new();
-    };
-    let detail = hover_contents(value.get("contents").unwrap_or(&Value::Null));
-    if detail.is_empty() {
-        return Vec::new();
-    }
-    let range = value.get("range");
-    let mut record = range
-        .and_then(|range| {
-            navigation_record_from_range(&path, range, SymbolKind::Definition, fallback_name)
-        })
-        .unwrap_or_else(|| {
-            let text = read_text(&path).unwrap_or_default();
-            NavigationRecord::new(
-                path.clone(),
-                language_for_path(&path).unwrap_or(Language::Text),
-                "clangd",
-                SymbolKind::Definition,
-                fallback_name,
-                fallback_name,
-                1,
-                1,
-                1,
-                1,
-                line_slice(&text, 1, 1),
-            )
-        });
-    record.detail = detail;
-    vec![record]
-}
-
-fn navigation_record_from_range(
-    path: &Path,
-    range: &Value,
-    kind: SymbolKind,
-    fallback_name: &str,
-) -> Option<NavigationRecord> {
-    let start_line = lsp_position(range.pointer("/start/line").and_then(Value::as_u64));
-    let start_column = lsp_position(range.pointer("/start/character").and_then(Value::as_u64));
-    let end_line = lsp_position(range.pointer("/end/line").and_then(Value::as_u64));
-    let end_column = lsp_position(range.pointer("/end/character").and_then(Value::as_u64));
-    let text = read_text(path).unwrap_or_default();
-    let source = line_slice(&text, start_line, end_line);
-    Some(NavigationRecord::new(
-        path.to_path_buf(),
-        language_for_path(path).unwrap_or(Language::Text),
-        "clangd",
-        kind,
-        fallback_name,
-        fallback_name,
-        start_line,
-        start_column,
-        end_line,
-        end_column,
-        source,
-    ))
-}
-
-fn hover_contents(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.trim().to_string(),
-        Value::Object(map) => {
-            if let Some(value) = map.get("value").and_then(Value::as_str) {
-                value.trim().to_string()
-            } else {
-                String::new()
-            }
-        }
-        Value::Array(items) => items
-            .iter()
-            .map(hover_contents)
-            .filter(|text| !text.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    }
-}
-
-fn published_diagnostics_to_records(message: &Value) -> Vec<DiagnosticRecord> {
-    let Some(uri) = message.pointer("/params/uri").and_then(Value::as_str) else {
-        return Vec::new();
-    };
-    let Some(path) = path_from_uri(uri) else {
-        return Vec::new();
-    };
-    let language = language_for_path(&path).unwrap_or(Language::Text);
-    let Some(diagnostics) = message
-        .pointer("/params/diagnostics")
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
-    diagnostics
-        .iter()
-        .filter_map(|raw| lsp_diagnostic_to_record(&path, language, raw))
-        .collect()
-}
-
-fn workspace_edit_to_text_edits(value: &Value) -> anyhow::Result<Vec<TextEdit>> {
-    let mut out = Vec::new();
-    if let Some(changes) = value.get("changes").and_then(Value::as_object) {
-        for (uri, edits) in changes {
-            let Some(path) = path_from_uri(uri) else {
-                continue;
-            };
-            let text = read_text(&path).unwrap_or_default();
-            if let Some(edits) = edits.as_array() {
-                for edit in edits {
-                    if let Some(text_edit) = lsp_text_edit(&path, &text, edit)? {
-                        out.push(text_edit);
-                    }
-                }
-            }
-        }
-    }
-    if let Some(document_changes) = value.get("documentChanges").and_then(Value::as_array) {
-        for document_change in document_changes {
-            let Some(uri) = document_change
-                .pointer("/textDocument/uri")
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            let Some(path) = path_from_uri(uri) else {
-                continue;
-            };
-            let text = read_text(&path).unwrap_or_default();
-            let Some(edits) = document_change.get("edits").and_then(Value::as_array) else {
-                continue;
-            };
-            for edit in edits {
-                if let Some(text_edit) = lsp_text_edit(&path, &text, edit)? {
-                    out.push(text_edit);
-                }
-            }
-        }
-    }
-    Ok(out)
-}
-
-fn lsp_text_edit(path: &Path, text: &str, value: &Value) -> anyhow::Result<Option<TextEdit>> {
-    let Some(range) = value.get("range") else {
-        return Ok(None);
-    };
-    let start_line = range
-        .pointer("/start/line")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let start_character = range
-        .pointer("/start/character")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let end_line = range
-        .pointer("/end/line")
-        .and_then(Value::as_u64)
-        .unwrap_or(start_line as u64) as usize;
-    let end_character = range
-        .pointer("/end/character")
-        .and_then(Value::as_u64)
-        .unwrap_or(start_character as u64) as usize;
-    let start = lsp_position_to_byte(text, start_line, start_character)
-        .with_context(|| format!("invalid clangd rename start range in {}", path.display()))?;
-    let end = lsp_position_to_byte(text, end_line, end_character)
-        .with_context(|| format!("invalid clangd rename end range in {}", path.display()))?;
-    Ok(Some(TextEdit {
-        path: path.to_path_buf(),
-        start,
-        end,
-        replacement: value
-            .get("newText")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-    }))
-}
-
-fn lsp_position_to_byte(text: &str, target_line: usize, target_character: usize) -> Option<usize> {
-    let mut line_start = 0;
-    let mut line = 0;
-    for (idx, ch) in text.char_indices() {
-        if line == target_line {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            line_start = idx + 1;
-        }
-    }
-    if line != target_line {
-        return (target_line == line && target_character == 0).then_some(text.len());
-    }
-    let line_text = text[line_start..].split('\n').next().unwrap_or("");
-    let mut character = 0;
-    for (offset, ch) in line_text.char_indices() {
-        if character == target_character {
-            return Some(line_start + offset);
-        }
-        character += if ch.len_utf16() == 2 { 2 } else { 1 };
-    }
-    (character == target_character).then_some(line_start + line_text.len())
-}
-
-fn lsp_diagnostic_to_record(
-    path: &Path,
-    language: Language,
-    raw: &Value,
-) -> Option<DiagnosticRecord> {
-    let range = raw.get("range")?;
-    let code = raw.get("code").and_then(|code| {
-        code.as_str()
-            .map(ToOwned::to_owned)
-            .or_else(|| code.as_i64().map(|value| value.to_string()))
-    });
-    Some(DiagnosticRecord {
-        path: path.to_path_buf(),
-        language,
-        backend: "lsp".to_string(),
-        tool: "clangd".to_string(),
-        severity: lsp_diagnostic_severity(raw.get("severity").and_then(Value::as_u64)),
-        code,
-        message: raw.get("message")?.as_str()?.to_string(),
-        start_line: lsp_position(range.pointer("/start/line").and_then(Value::as_u64)),
-        start_column: lsp_position(range.pointer("/start/character").and_then(Value::as_u64)),
-        end_line: lsp_position(range.pointer("/end/line").and_then(Value::as_u64)),
-        end_column: lsp_position(range.pointer("/end/character").and_then(Value::as_u64)),
-        related: related_lsp_diagnostics(raw),
-    })
-}
-
-fn related_lsp_diagnostics(raw: &Value) -> Vec<RelatedDiagnostic> {
-    let Some(related) = raw.get("relatedInformation").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    related
-        .iter()
-        .filter_map(|item| {
-            let location = item.get("location")?;
-            let path = path_from_uri(location.get("uri")?.as_str()?)?;
-            let range = location.get("range")?;
-            Some(RelatedDiagnostic {
-                path,
-                message: item
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                start_line: lsp_position(range.pointer("/start/line").and_then(Value::as_u64)),
-                start_column: lsp_position(
-                    range.pointer("/start/character").and_then(Value::as_u64),
-                ),
-            })
-        })
-        .collect()
-}
-
-fn lsp_diagnostic_severity(value: Option<u64>) -> DiagnosticSeverity {
-    match value {
-        Some(1) => DiagnosticSeverity::Error,
-        Some(2) => DiagnosticSeverity::Warning,
-        Some(3) => DiagnosticSeverity::Info,
-        Some(4) => DiagnosticSeverity::Hint,
-        _ => DiagnosticSeverity::Info,
-    }
-}
-
-fn lsp_position(value: Option<u64>) -> usize {
-    value.unwrap_or(0) as usize + 1
-}
-
 fn lsp_kind(kind: u64) -> Option<SymbolKind> {
     match kind {
         5 => Some(SymbolKind::Class),
@@ -1122,4 +628,82 @@ fn uri_for_path(path: &Path) -> anyhow::Result<String> {
 
 fn path_from_uri(uri: &str) -> Option<PathBuf> {
     Url::parse(uri).ok()?.to_file_path().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_client_terminates_and_reaps_child() {
+        let mut command = long_running_command();
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("long-running test child should start");
+        let process_id = child.id();
+        let stdin = child
+            .stdin
+            .take()
+            .expect("test child stdin should be piped");
+        let stdout = BufReader::new(
+            child
+                .stdout
+                .take()
+                .expect("test child stdout should be piped"),
+        );
+
+        let client = ClangdClient {
+            child,
+            stdin,
+            stdout,
+            next_id: 1,
+        };
+        drop(client);
+
+        assert!(!process_exists(process_id));
+    }
+
+    #[cfg(unix)]
+    fn long_running_command() -> Command {
+        let mut command = Command::new("sh");
+        command.args(["-c", "while :; do sleep 60; done"]);
+        command
+    }
+
+    #[cfg(windows)]
+    fn long_running_command() -> Command {
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "while ($true) { Start-Sleep -Seconds 60 }",
+        ]);
+        command
+    }
+
+    #[cfg(unix)]
+    fn process_exists(process_id: u32) -> bool {
+        Command::new("kill")
+            .args(["-0", &process_id.to_string()])
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    #[cfg(windows)]
+    fn process_exists(process_id: u32) -> bool {
+        Command::new("powershell.exe")
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &format!("Get-Process -Id {process_id} -ErrorAction SilentlyContinue"),
+            ])
+            .status()
+            .is_ok_and(|status| status.success())
+    }
 }

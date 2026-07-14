@@ -6,57 +6,21 @@ use ignore::WalkBuilder;
 use crate::model::{Language, LanguageFilter};
 
 pub const PY_EXTS: &[&str] = &["py"];
-pub const RUST_EXTS: &[&str] = &["rs"];
 pub const CPP_EXTS: &[&str] = &[
     "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "hxx", "ipp", "tpp", "inl",
 ];
 pub const CUDA_EXTS: &[&str] = &["cu", "cuh"];
 pub const HIP_EXTS: &[&str] = &["hip"];
-pub const CMAKE_EXTS: &[&str] = &["cmake"];
 pub const MARKDOWN_EXTS: &[&str] = &["md", "markdown", "mdown", "mkdn"];
-pub const DEFAULT_IGNORED_DIRS: &[&str] = &[
-    ".git",
-    ".codex",
-    ".agents",
-    ".hg",
-    ".svn",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    "__pycache__",
-    "build",
-    "dist",
-    "node_modules",
-    "venv",
-    ".venv",
-    "target",
-    "third_party",
-    "third-party",
-    "vendor",
-    "vendors",
-    "external",
-    "extern",
-    "_deps",
-];
 
 pub fn language_for_path(path: &Path) -> Option<Language> {
-    if path
-        .file_name()
-        .is_some_and(|name| name.eq_ignore_ascii_case("CMakeLists.txt"))
-    {
-        return Some(Language::Cmake);
-    }
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     if PY_EXTS.contains(&ext.as_str()) {
         Some(Language::Python)
-    } else if RUST_EXTS.contains(&ext.as_str()) {
-        Some(Language::Rust)
     } else if CUDA_EXTS.contains(&ext.as_str()) {
         Some(Language::Cuda)
     } else if HIP_EXTS.contains(&ext.as_str()) {
         Some(Language::Hip)
-    } else if CMAKE_EXTS.contains(&ext.as_str()) {
-        Some(Language::Cmake)
     } else if ext == "c" {
         Some(Language::C)
     } else if CPP_EXTS.contains(&ext.as_str()) {
@@ -72,20 +36,12 @@ pub fn language_allowed(language: Language, filter: Option<LanguageFilter>) -> b
     match filter {
         None => true,
         Some(LanguageFilter::Python) => language == Language::Python,
-        Some(LanguageFilter::Rust) => language == Language::Rust,
         Some(LanguageFilter::C) => language == Language::C,
         Some(LanguageFilter::Cpp | LanguageFilter::Cxx) => language == Language::Cpp,
         Some(LanguageFilter::Cuda) => language == Language::Cuda,
         Some(LanguageFilter::Hip) => language == Language::Hip,
-        Some(LanguageFilter::Cmake) => language == Language::Cmake,
         Some(LanguageFilter::Markdown) => language == Language::Markdown,
     }
-}
-
-pub fn is_default_ignored_dir(name: &str) -> bool {
-    DEFAULT_IGNORED_DIRS
-        .iter()
-        .any(|ignored| name.eq_ignore_ascii_case(ignored))
 }
 
 pub fn source_files(path: &Path, filter: Option<LanguageFilter>) -> Vec<PathBuf> {
@@ -99,19 +55,30 @@ pub fn source_files(path: &Path, filter: Option<LanguageFilter>) -> Vec<PathBuf>
         return files;
     }
 
-    let root = path.to_path_buf();
     let mut builder = WalkBuilder::new(path);
     builder
         .hidden(false)
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .filter_entry(move |entry| {
-            if entry.path() == root {
-                return true;
-            }
+        .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
-            !is_default_ignored_dir(&name)
+            !matches!(
+                name.as_ref(),
+                ".git"
+                    | ".hg"
+                    | ".svn"
+                    | ".mypy_cache"
+                    | ".pytest_cache"
+                    | ".ruff_cache"
+                    | "__pycache__"
+                    | "build"
+                    | "dist"
+                    | "node_modules"
+                    | "venv"
+                    | ".venv"
+                    | "target"
+            )
         });
 
     for entry in builder.build().filter_map(Result::ok) {
@@ -154,19 +121,10 @@ mod tests {
     #[test]
     fn language_detection_covers_supported_extensions() {
         assert_eq!(language_for_path(Path::new("x.py")), Some(Language::Python));
-        assert_eq!(language_for_path(Path::new("x.rs")), Some(Language::Rust));
         assert_eq!(language_for_path(Path::new("x.c")), Some(Language::C));
         assert_eq!(language_for_path(Path::new("x.hpp")), Some(Language::Cpp));
         assert_eq!(language_for_path(Path::new("x.cu")), Some(Language::Cuda));
         assert_eq!(language_for_path(Path::new("x.hip")), Some(Language::Hip));
-        assert_eq!(
-            language_for_path(Path::new("CMakeLists.txt")),
-            Some(Language::Cmake)
-        );
-        assert_eq!(
-            language_for_path(Path::new("x.cmake")),
-            Some(Language::Cmake)
-        );
         assert_eq!(
             language_for_path(Path::new("x.md")),
             Some(Language::Markdown)
@@ -177,45 +135,5 @@ mod tests {
     #[test]
     fn line_slice_preserves_requested_lines_with_trailing_newline() {
         assert_eq!(line_slice("a\nb\nc\n", 2, 3), "b\nc\n");
-    }
-
-    #[test]
-    fn source_files_skips_common_vendored_dependency_roots() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("src")).unwrap();
-        fs::create_dir_all(dir.path().join(".codex").join("skills")).unwrap();
-        fs::create_dir_all(dir.path().join("third_party").join("cutlass")).unwrap();
-        fs::write(
-            dir.path().join("src").join("main.py"),
-            "def keep():\n    pass\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.path().join(".codex").join("skills").join("notes.md"),
-            "# skipped\n",
-        )
-        .unwrap();
-        fs::write(
-            dir.path()
-                .join("third_party")
-                .join("cutlass")
-                .join("kernel.cu"),
-            "__global__ void skipped() {}\n",
-        )
-        .unwrap();
-
-        let files = source_files(dir.path(), None);
-        assert_eq!(files, vec![dir.path().join("src").join("main.py")]);
-    }
-
-    #[test]
-    fn source_files_allows_explicitly_targeted_ignored_root() {
-        let dir = tempfile::tempdir().unwrap();
-        let third_party = dir.path().join("third_party");
-        fs::create_dir_all(&third_party).unwrap();
-        fs::write(third_party.join("kernel.cu"), "__global__ void kept() {}\n").unwrap();
-
-        let files = source_files(&third_party, None);
-        assert_eq!(files, vec![third_party.join("kernel.cu")]);
     }
 }

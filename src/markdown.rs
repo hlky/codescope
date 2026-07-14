@@ -134,18 +134,7 @@ fn heading_matches(wanted: &str, title: &str, qualified: &str) -> bool {
     if wanted.is_empty() {
         return false;
     }
-    title == wanted
-        || qualified == wanted
-        || qualified.ends_with(&format!(".{wanted}"))
-        || numbered_heading_matches(wanted, title)
-}
-
-fn numbered_heading_matches(wanted: &str, title: &str) -> bool {
-    let wanted = wanted.trim_end_matches('.');
-    !wanted.is_empty()
-        && title
-            .strip_prefix(wanted)
-            .is_some_and(|suffix| suffix.starts_with(". "))
+    title == wanted || qualified == wanted || qualified.ends_with(&format!(".{wanted}"))
 }
 
 fn node_text(node: Node<'_>, text: &str) -> Option<String> {
@@ -197,13 +186,5 @@ next
         let symbols = headings(Path::new("README.md"), text, Some("Intro.Usage"));
         assert_eq!(symbols.len(), 1);
         assert_eq!(symbols[0].name, "Usage");
-    }
-
-    #[test]
-    fn heading_lookup_accepts_numbered_shorthand() {
-        let text = "# Intro\n\n## 14. Skip/defer list\nbody\n";
-        let symbols = headings(Path::new("README.md"), text, Some("14"));
-        assert_eq!(symbols.len(), 1);
-        assert_eq!(symbols[0].name, "14. Skip/defer list");
     }
 }

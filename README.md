@@ -9,68 +9,21 @@ codescope list-functions --path .
 codescope extract-function --name Namespace::Class::method --path src
 codescope extract-symbol --name Foo --kind class --path .
 codescope extract-variable --name CONFIG --scope Foo --path .
-codescope extract-variable --name MY_LIST --lang cmake --path CMakeLists.txt
-codescope extract-block --name ENABLE_FEATURE --lang cmake --path CMakeLists.txt
-codescope extract-block --name ENABLE_FEATURE --contains generated_target --smallest --lang cmake --path CMakeLists.txt
-codescope extract-symbol --name my_target --kind target --lang cmake --path CMakeLists.txt
 codescope list-headings --path docs
 codescope extract-section --name Usage --path README.md
 codescope references --name foo --path .
 codescope callers --name foo --path .
-codescope callees --name foo --path .
-codescope callgraph --name foo --depth 2 --path . --json
-codescope dataflow --name CONFIG --path .
-codescope definition --name Foo --path .
-codescope definition --file src/foo.cpp --line 42 --column 17 --backend lsp
-codescope type-of --file src/foo.py --line 42 --column 12 --json
-codescope hover --file src/foo.cpp --line 42 --column 17 --backend lsp --json
-codescope tests-for --name foo --path .
-codescope tests-for --file src/foo.py --path . --json
-codescope related --file src/foo.py --path .
-codescope related --name Foo --path . --json
-codescope impact --name foo --path .
-codescope impact --file src/foo.cpp --path . --json
-codescope impact --file src/foo.cpp --changed-lines 10-30 --path .
 codescope context --name foo --path .
-codescope context-pack --name foo --path .
-codescope context-pack --file src/foo.py --around-line 80 --path .
-codescope workspace-map --path .
-codescope workspace-map --path . --json
-codescope diagnostics --path .
-codescope diagnostics --tool cargo --json --path .
-codescope diagnostics --tool clangd --backend lsp --lang cpp --path .
-codescope diagnostics --tool ruff --path .
-codescope diagnostics --tool mypy --path .
-codescope diagnostics --tool pyright --path .
-codescope diagnostics --tool cmake --path .
-codescope replace-text --find "old" --replace "new" --path . --preview
-codescope replace-regex --find "old_(\\w+)" --replace "new_${1}" --path . --preview
-codescope replace --name OldSymbol --with NewSymbol --kind function --path . --preview
-codescope rename-symbol --from Foo --to Bar --path . --preview
-codescope rename-symbol --from Foo --to Bar --semantic --path . --preview
-codescope rewrite-import --from old.module --to new.module --path . --preview
-codescope rewrite-markdown --heading-from "Old Title" --heading-to "New Title" --path docs --preview
-codescope rewrite-markdown --link-from docs/old.md --link-to docs/new.md --path docs --preview
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols, references, call graphs, dataflow slices, and IDE-style navigation, heuristic test and related-file discovery, change impact reports, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, ranked context packs, compact workspace maps, cargo/clangd diagnostics, lexical CMake command extraction, and tree-sitter-backed Markdown heading and section extraction.
+The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
 - Python structural parsing via tree-sitter.
-- Function listing, C-family semantic symbols/references, plus definition, type, and hover navigation via clangd LSP when available.
-- Python structural definition navigation for functions, classes, variables, and imports, with best-effort `type-of` and `hover` summaries.
-- `callees`, bounded `callgraph`, and `dataflow` graph output for focused execution and value-flow slices.
-- Heuristic `tests-for` discovery by symbol or file, including Python test symbols, C-family test macros, and CMake `add_test(...)` entries.
-- `related` discovery for likely next files: definitions, references, tests, docs, C-family header/implementation pairs, CMake build links, Markdown links, and nearby modules.
-- `impact` reports for a symbol, file, or changed line range, combining definitions, references, callers, callees, tests, docs, CMake target associations, confidence, and notes.
+- C-family semantic symbols/references via clangd LSP when available.
 - C-family structural fallback via tree-sitter and lexical scanning.
-- Ranked `context-pack` output for a symbol or file line, combining definitions, imports/includes, callers, references, nearby tests, docs, CMake metadata, diagnostics, and notes under an approximate source-character budget.
-- `workspace-map` output for agents, summarizing languages, source/test/doc roots, build files, CMake targets, common tool availability, Git status, ignored directories, and notes.
-- Normalized diagnostics from `cargo check --message-format=json`, clangd LSP, Ruff, mypy, Pyright, and CMake configure/build output.
-- CMake variables, command blocks, narrowed block selection, targets, and references via lexical scanning.
-- Complete `list-functions` and `list-headings` output by default, with explicit `--max-matches` caps and numbered Markdown heading shorthand such as `--name 14`.
-- Previewable, diff-aware edit operations for literal text, regexes, symbols, semantic renames, import/module paths, and Markdown headings/links.
+- Markdown headings and sections via tree-sitter.
 - Codex skill packaging in `skill/SKILL.md`.
 
 See [docs/USAGE.md](docs/USAGE.md) for command details.
@@ -98,10 +51,6 @@ The install script copies `codescope.exe` into `%USERPROFILE%\.codex\bin` and in
 - `2`: CLI or configuration error
 - `3`: explicitly required backend failed
 
-Edit commands default to preview mode. Add `--apply` to write changes, and add `--confirm` with `--apply` to require a clean Git worktree before writing so changes can be undone through Git. All edit commands support `--include`, `--exclude`, `--lang`, `--max-files`, and `--json`.
-
-`rename-symbol` preserves its identifier-boundary rewrite behavior by default. Add `--semantic` for a stricter refactor preview: Python uses tree-sitter identifier nodes for definitions and references, C-family files use clangd rename, and comments/strings or other textual matches outside the safe edit set are reported as skipped. C-family semantic rename exits with code `3` when clangd cannot run or cannot produce a safe rename.
-
 ## JSON Output
 
 Use `--json` for stable machine-readable records:
@@ -122,20 +71,6 @@ Use `--json` for stable machine-readable records:
 
 ```json
 {
-  "path": "CMakeLists.txt",
-  "language": "cmake",
-  "backend": "lexical",
-  "kind": "variable",
-  "name": "MY_LIST",
-  "qualified_name": "MY_LIST",
-  "start_line": 10,
-  "end_line": 18,
-  "source": "set(MY_LIST ...)"
-}
-```
-
-```json
-{
   "path": "README.md",
   "language": "markdown",
   "backend": "tree-sitter",
@@ -147,83 +82,3 @@ Use `--json` for stable machine-readable records:
   "source": "..."
 }
 ```
-
-Diagnostics records use a separate normalized shape:
-
-```json
-{
-  "path": "src/lib.rs",
-  "language": "rust",
-  "backend": "cargo",
-  "tool": "cargo",
-  "severity": "error",
-  "code": "E0425",
-  "message": "cannot find value `missing` in this scope",
-  "start_line": 1,
-  "start_column": 16,
-  "end_line": 1,
-  "end_column": 23
-}
-```
-
-Explicit diagnostics tool failures, including missing tools and timeouts, are emitted as `backend-error` records and exit with code `3`.
-
-Related test records from `tests-for` include the candidate test location, heuristic reason, score, and source snippet:
-
-```json
-{
-  "path": "tests/test_example.py",
-  "language": "python",
-  "backend": "tree-sitter",
-  "test_name": "test_helper",
-  "qualified_name": "test_helper",
-  "start_line": 3,
-  "end_line": 4,
-  "reason": "test source references subject",
-  "score": 90,
-  "source": "def test_helper():\n    assert helper() == 1\n"
-}
-```
-
-`tests-for` is heuristic. Verify the reported matches before treating them as exhaustive.
-
-Related records from `related` include a relationship label, score, reason, language, and line range:
-
-```json
-{
-  "path": "src/example.cpp",
-  "relationship": "implementation",
-  "score": 110,
-  "reason": "C-family header/source basename pair",
-  "language": "cpp",
-  "start_line": 1,
-  "end_line": 1
-}
-```
-
-Relationship values are `definition`, `reference`, `test`, `doc`, `header`, `implementation`, `build`, `linked`, and `neighbor`.
-
-`impact --json` emits a grouped report with `subject`, `definitions`, `references`, `callers`, `callees`, `tests`, `docs`, `build_targets`, `diagnostics`, `confidence`, and `notes`. Each entry includes `path`, `start_line`, `end_line`, `language`, `backend`, `kind`, `name`, `qualified_name`, `reason`, and `source`.
-
-Navigation records from `definition`, `type-of`, and `hover` include line and column ranges:
-
-```json
-{
-  "path": "src/example.cpp",
-  "language": "cpp",
-  "backend": "clangd",
-  "kind": "definition",
-  "name": "helper",
-  "qualified_name": "helper",
-  "start_line": 12,
-  "start_column": 5,
-  "end_line": 14,
-  "end_column": 2,
-  "source": "int helper() { ... }",
-  "detail": "hover or best-effort type text"
-}
-```
-
-`context-pack --json` emits a pack with `subject`, `budget`, ranked `items`, whole-item `omitted` entries, and `notes`. Each item includes `role`, `path`, `start_line`, `end_line`, `language`, `backend`, `score`, `reason`, and `source`. Symbol/search-style query commands accept one or more `--path` roots, for example `context-pack --path src tests`. Project traversal honors Git ignore files and skips common generated, vendored, and agent metadata roots such as `.codex`, `.agents`, `third_party`, `vendor`, `external`, and `_deps`.
-
-`workspace-map --json` emits a compact project map with `root`, language file counts, source roots, build systems, CMake targets, test roots, doc roots, tool availability, Git status, ignored patterns, and notes. Use `--max-targets N` to cap target output for large CMake projects.
