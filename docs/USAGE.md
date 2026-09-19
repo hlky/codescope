@@ -2,6 +2,8 @@
 
 `codescope` searches source files under `--path` and emits either compact plain text or JSON records.
 
+Windows paths in both formats use `/` separators without the extended-path prefix: `H:/directory/file.py` or `//server/share/file.py` for UNC paths.
+
 ## Commands
 
 ```bash
@@ -20,15 +22,17 @@ codescope context --name foo --path .
 
 - `--json`: emit stable JSON records.
 - `--max-matches N`: stop after `N` matches.
-- `--lang python|c|cpp|c++|cuda|hip|markdown`: limit language search.
-- `--kind function|class|struct|enum|variable|heading|all`: limit symbol kind where supported.
+- `--lang python|rust|c|cpp|c++|cuda|hip|markdown`: limit language search.
+- `--kind function|class|struct|enum|union|trait|module|type-alias|macro|variable|heading|all`: limit symbol kind where supported.
 - `--backend auto|lsp|tree-sitter|lexical`: choose backend behavior.
-- `--root PATH`: set project root for clangd.
+- `--root PATH`: set the project root for clangd or rust-analyzer.
 - `--compile-commands-dir PATH`: pass a compilation database directory to clangd.
 
 ## Backends
 
 Python uses tree-sitter for tolerant structural parsing.
+
+Rust uses rust-analyzer in `auto` when the executable is available, then falls back to tree-sitter. `--backend lsp` requires rust-analyzer and exits non-zero if it cannot run. Semantic references and callers resolve definitions across a Cargo workspace; codescope discovers the nearest parent `Cargo.toml` unless `--root` is provided. The tree-sitter fallback covers functions and methods, structs, enums, unions, traits, modules, type aliases, macros, constants, statics, fields, local bindings, and structural reference/caller matches. Rust qualified names use `::`, such as `module::Type::method`.
 
 C-family files use clangd in `auto` when available, then fall back to tree-sitter. `--backend lsp` requires clangd and exits non-zero if clangd cannot run. `--backend lexical` is a rough fallback for functions, types, variables, and references.
 

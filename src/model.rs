@@ -13,6 +13,7 @@ pub enum LanguageFilter {
     Cxx,
     Cuda,
     Hip,
+    Rust,
     Markdown,
 }
 
@@ -24,6 +25,7 @@ pub enum Language {
     Cpp,
     Cuda,
     Hip,
+    Rust,
     Markdown,
     Text,
 }
@@ -36,6 +38,7 @@ impl fmt::Display for Language {
             Self::Cpp => "cpp",
             Self::Cuda => "cuda",
             Self::Hip => "hip",
+            Self::Rust => "rust",
             Self::Markdown => "markdown",
             Self::Text => "text",
         };
@@ -49,6 +52,11 @@ pub enum SymbolKindFilter {
     Class,
     Struct,
     Enum,
+    Union,
+    Trait,
+    Module,
+    TypeAlias,
+    Macro,
     Variable,
     Heading,
     All,
@@ -61,6 +69,11 @@ pub enum SymbolKind {
     Class,
     Struct,
     Enum,
+    Union,
+    Trait,
+    Module,
+    TypeAlias,
+    Macro,
     Variable,
     Heading,
     Reference,
@@ -73,6 +86,11 @@ impl fmt::Display for SymbolKind {
             Self::Class => "class",
             Self::Struct => "struct",
             Self::Enum => "enum",
+            Self::Union => "union",
+            Self::Trait => "trait",
+            Self::Module => "module",
+            Self::TypeAlias => "type-alias",
+            Self::Macro => "macro",
             Self::Variable => "variable",
             Self::Heading => "heading",
             Self::Reference => "reference",
@@ -104,6 +122,7 @@ impl fmt::Display for Backend {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Symbol {
+    #[serde(serialize_with = "crate::output::serialize_path")]
     pub path: PathBuf,
     pub language: Language,
     pub backend: String,
@@ -152,6 +171,11 @@ pub fn kind_matches(filter: Option<SymbolKindFilter>, kind: SymbolKind) -> bool 
         Some(SymbolKindFilter::Class) => kind == SymbolKind::Class,
         Some(SymbolKindFilter::Struct) => kind == SymbolKind::Struct,
         Some(SymbolKindFilter::Enum) => kind == SymbolKind::Enum,
+        Some(SymbolKindFilter::Union) => kind == SymbolKind::Union,
+        Some(SymbolKindFilter::Trait) => kind == SymbolKind::Trait,
+        Some(SymbolKindFilter::Module) => kind == SymbolKind::Module,
+        Some(SymbolKindFilter::TypeAlias) => kind == SymbolKind::TypeAlias,
+        Some(SymbolKindFilter::Macro) => kind == SymbolKind::Macro,
         Some(SymbolKindFilter::Variable) => kind == SymbolKind::Variable,
         Some(SymbolKindFilter::Heading) => kind == SymbolKind::Heading,
     }
@@ -167,7 +191,7 @@ pub fn name_matches(wanted: &str, short: &str, qualified: &str, sep: &str) -> bo
     }
     if sep == "::" {
         let cpp = normalized.replace('.', "::");
-        qualified.ends_with(&format!("::{normalized}")) || qualified.ends_with(&cpp)
+        qualified.ends_with(&format!("::{cpp}"))
     } else {
         qualified.ends_with(&format!(".{normalized}"))
     }
@@ -213,6 +237,12 @@ mod tests {
             "Other::method",
             "method",
             "Namespace::Class::method",
+            "::"
+        ));
+        assert!(!name_matches(
+            "method",
+            "other_method",
+            "Namespace::other_method",
             "::"
         ));
     }

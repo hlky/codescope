@@ -36,6 +36,7 @@ fn import_context(language: Language, text: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join("\n"),
+        Language::Rust => crate::rust::import_context(text),
         Language::Markdown | Language::Text => String::new(),
     }
 }

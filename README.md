@@ -16,11 +16,13 @@ codescope callers --name foo --path .
 codescope context --name foo --path .
 ```
 
-The first production slice supports tree-sitter-backed Python extraction, clangd-backed C-family symbols and references, tree-sitter/lexical fallback for C, C++, CUDA, and HIP, and tree-sitter-backed Markdown heading and section extraction.
+The first production slice supports tree-sitter-backed Python extraction, rust-analyzer-backed Rust semantics, clangd-backed C-family semantics, structural fallbacks for Rust and C-family files, and tree-sitter-backed Markdown heading and section extraction.
 
 Current implementation:
 
 - Python structural parsing via tree-sitter.
+- Rust semantic symbols, references, and callers via rust-analyzer when available.
+- Rust structural parsing and fallback via tree-sitter.
 - C-family semantic symbols/references via clangd LSP when available.
 - C-family structural fallback via tree-sitter and lexical scanning.
 - Markdown headings and sections via tree-sitter.
@@ -52,6 +54,8 @@ The install script copies `codescope.exe` into `%USERPROFILE%\.codex\bin` and in
 - `3`: explicitly required backend failed
 
 ## JSON Output
+
+Windows paths in plain text and JSON use forward slashes and omit the extended-path prefix (for example, `H:/directory/file.py`). UNC paths use `//server/share/file.py`.
 
 Use `--json` for stable machine-readable records:
 

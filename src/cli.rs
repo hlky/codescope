@@ -5,7 +5,7 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 
 use crate::context::add_import_context;
-use crate::lsp::ClangdOptions;
+use crate::lsp::{LspOptions, LspServer};
 use crate::model::{Backend, Language, Symbol, SymbolKindFilter};
 use crate::workspace::{language_for_path, read_text, source_files};
 
@@ -246,6 +246,7 @@ fn collect_symbols(
         .map_err(AppError::Config)?;
     let mut out = Vec::new();
     let mut c_family = Vec::new();
+    let mut rust_files = Vec::new();
     for file in source_files(&path, common.lang) {
         let Some(text) = read_text(&file) else {
             continue;
@@ -254,6 +255,7 @@ fn collect_symbols(
             Some(Language::Python) => {
                 out.extend(crate::python::symbols(&file, &text, kind, wanted))
             }
+            Some(Language::Rust) => rust_files.push((file, text)),
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
                 c_family.push((file, text));
             }
@@ -271,6 +273,16 @@ fn collect_symbols(
         if out.len() >= common.max_matches {
             break;
         }
+    }
+    if !rust_files.is_empty() && out.len() < common.max_matches {
+        out.extend(collect_rust_symbols(
+            common,
+            &path,
+            &rust_files,
+            kind,
+            wanted,
+            common.max_matches - out.len(),
+        )?);
     }
     if !c_family.is_empty() && out.len() < common.max_matches {
         out.extend(collect_c_family_symbols(
@@ -317,6 +329,7 @@ fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, 
         .map_err(AppError::Config)?;
     let mut out = Vec::new();
     let mut c_family = Vec::new();
+    let mut rust_files = Vec::new();
     for file in source_files(&path, common.lang) {
         let Some(text) = read_text(&file) else {
             continue;
@@ -328,6 +341,7 @@ fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, 
                 wanted,
                 common.max_matches - out.len(),
             )),
+            Some(Language::Rust) => rust_files.push((file, text)),
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
                 c_family.push((file, text));
             }
@@ -336,6 +350,15 @@ fn collect_references(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, 
         if out.len() >= common.max_matches {
             break;
         }
+    }
+    if !rust_files.is_empty() && out.len() < common.max_matches {
+        out.extend(collect_rust_references(
+            common,
+            &path,
+            &rust_files,
+            wanted,
+            common.max_matches - out.len(),
+        )?);
     }
     if !c_family.is_empty() && out.len() < common.max_matches {
         out.extend(collect_c_family_references(
@@ -357,6 +380,7 @@ fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, App
         .map_err(AppError::Config)?;
     let mut out = Vec::new();
     let mut c_family = Vec::new();
+    let mut rust_files = Vec::new();
     for file in source_files(&path, common.lang) {
         let Some(text) = read_text(&file) else {
             continue;
@@ -368,6 +392,7 @@ fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, App
                 wanted,
                 common.max_matches - out.len(),
             )),
+            Some(Language::Rust) => rust_files.push((file, text)),
             Some(Language::C | Language::Cpp | Language::Cuda | Language::Hip) => {
                 c_family.push((file, text));
             }
@@ -376,6 +401,15 @@ fn collect_callers(common: &CommonArgs, wanted: &str) -> Result<Vec<Symbol>, App
         if out.len() >= common.max_matches {
             break;
         }
+    }
+    if !rust_files.is_empty() && out.len() < common.max_matches {
+        out.extend(collect_rust_callers(
+            common,
+            &path,
+            &rust_files,
+            wanted,
+            common.max_matches - out.len(),
+        )?);
     }
     if !c_family.is_empty() && out.len() < common.max_matches {
         out.extend(collect_c_family_callers(
@@ -397,7 +431,7 @@ fn collect_c_family_symbols(
     wanted: Option<&str>,
     max_matches: usize,
 ) -> Result<Vec<Symbol>, AppError> {
-    let options = clangd_options(common, search_root)?;
+    let options = lsp_options(common, search_root, LspServer::Clangd)?;
     if common.backend == Backend::Lsp {
         return crate::lsp::document_symbols(files, &options, kind, wanted, max_matches)
             .map_err(AppError::Backend);
@@ -436,7 +470,7 @@ fn collect_c_family_references(
     wanted: &str,
     max_matches: usize,
 ) -> Result<Vec<Symbol>, AppError> {
-    let options = clangd_options(common, search_root)?;
+    let options = lsp_options(common, search_root, LspServer::Clangd)?;
     if common.backend == Backend::Lsp {
         return crate::lsp::references(files, &options, wanted, max_matches)
             .map_err(AppError::Backend);
@@ -471,7 +505,7 @@ fn collect_c_family_callers(
     wanted: &str,
     max_matches: usize,
 ) -> Result<Vec<Symbol>, AppError> {
-    let options = clangd_options(common, search_root)?;
+    let options = lsp_options(common, search_root, LspServer::Clangd)?;
     if common.backend == Backend::Lsp {
         return crate::lsp::callers(files, &options, wanted, max_matches)
             .map_err(AppError::Backend);
@@ -508,10 +542,114 @@ fn collect_c_family_callers(
         .collect())
 }
 
-fn clangd_options(
+fn collect_rust_symbols(
     common: &CommonArgs,
     search_root: &std::path::Path,
-) -> Result<ClangdOptions, AppError> {
+    files: &[(PathBuf, String)],
+    kind: Option<SymbolKindFilter>,
+    wanted: Option<&str>,
+    max_matches: usize,
+) -> Result<Vec<Symbol>, AppError> {
+    let options = lsp_options(common, search_root, LspServer::RustAnalyzer)?;
+    if common.backend == Backend::Lsp {
+        return crate::lsp::document_symbols(files, &options, kind, wanted, max_matches)
+            .map_err(AppError::Backend);
+    }
+    if common.backend == Backend::Auto
+        && crate::lsp::rust_analyzer_available()
+        && let Ok(symbols) =
+            crate::lsp::document_symbols(files, &options, kind, wanted, max_matches)
+        && !symbols.is_empty()
+    {
+        return Ok(symbols);
+    }
+
+    let mut out = Vec::new();
+    for (file, text) in files {
+        out.extend(crate::rust::symbols(file, text, kind, wanted));
+        if out.len() >= max_matches {
+            break;
+        }
+    }
+    out.truncate(max_matches);
+    Ok(out)
+}
+
+fn collect_rust_references(
+    common: &CommonArgs,
+    search_root: &std::path::Path,
+    files: &[(PathBuf, String)],
+    wanted: &str,
+    max_matches: usize,
+) -> Result<Vec<Symbol>, AppError> {
+    let options = lsp_options(common, search_root, LspServer::RustAnalyzer)?;
+    if common.backend == Backend::Lsp {
+        return crate::lsp::references(files, &options, wanted, max_matches)
+            .map_err(AppError::Backend);
+    }
+    if common.backend == Backend::Auto
+        && crate::lsp::rust_analyzer_available()
+        && let Ok(symbols) = crate::lsp::references(files, &options, wanted, max_matches)
+        && !symbols.is_empty()
+    {
+        return Ok(symbols);
+    }
+
+    let mut out = Vec::new();
+    for (file, text) in files {
+        out.extend(crate::rust::references(
+            file,
+            text,
+            wanted,
+            max_matches - out.len(),
+        ));
+        if out.len() >= max_matches {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn collect_rust_callers(
+    common: &CommonArgs,
+    search_root: &std::path::Path,
+    files: &[(PathBuf, String)],
+    wanted: &str,
+    max_matches: usize,
+) -> Result<Vec<Symbol>, AppError> {
+    let options = lsp_options(common, search_root, LspServer::RustAnalyzer)?;
+    if common.backend == Backend::Lsp {
+        return crate::lsp::callers(files, &options, wanted, max_matches)
+            .map_err(AppError::Backend);
+    }
+    if common.backend == Backend::Auto
+        && crate::lsp::rust_analyzer_available()
+        && let Ok(symbols) = crate::lsp::callers(files, &options, wanted, max_matches)
+        && !symbols.is_empty()
+    {
+        return Ok(symbols);
+    }
+
+    let mut out = Vec::new();
+    for (file, text) in files {
+        out.extend(crate::rust::callers(
+            file,
+            text,
+            wanted,
+            max_matches - out.len(),
+        ));
+        if out.len() >= max_matches {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+fn lsp_options(
+    common: &CommonArgs,
+    search_root: &std::path::Path,
+    server: LspServer,
+) -> Result<LspOptions, AppError> {
     let root = match &common.root {
         Some(root) => root
             .canonicalize()
@@ -523,10 +661,24 @@ fn clangd_options(
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| search_root.to_path_buf()),
     };
-    Ok(ClangdOptions {
+    let root = if server == LspServer::RustAnalyzer && common.root.is_none() {
+        cargo_root(&root).unwrap_or(root)
+    } else {
+        root
+    };
+    Ok(LspOptions {
         root,
         compile_commands_dir: common.compile_commands_dir.clone(),
+        server,
     })
+}
+
+fn cargo_root(path: &std::path::Path) -> Option<PathBuf> {
+    let start = if path.is_dir() { path } else { path.parent()? };
+    start
+        .ancestors()
+        .find(|candidate| candidate.join("Cargo.toml").is_file())
+        .map(std::path::Path::to_path_buf)
 }
 
 enum AppError {

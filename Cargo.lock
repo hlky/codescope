@@ -163,7 +163,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "codescope"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -179,6 +179,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-md-025",
  "tree-sitter-python",
+ "tree-sitter-rust",
  "url",
  "which",
 ]
@@ -811,6 +812,16 @@ name = "tree-sitter-python"
 version = "0.23.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d065aaa27f3aaceaf60c1f0e0ac09e1cb9eb8ed28e7bcdaa52129cffc7f4b04"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-rust"
+version = "0.24.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "439e577dbe07423ec2582ac62c7531120dbfccfa6e5f92406f93dd271a120e45"
 dependencies = [
  "cc",
  "tree-sitter-language",

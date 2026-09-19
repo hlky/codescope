@@ -10,6 +10,8 @@
 - clangd call hierarchy for C-family callers when available.
 - JSON/plain output and strict exit codes.
 - Tree-sitter Markdown backend for headings and section extraction.
+- Tree-sitter Rust backend for symbols, references, callers, and context.
+- rust-analyzer LSP backend for semantic Rust symbols, references, and callers.
 - Integration tests for the CLI contract.
 - Codex skill packaging.
 - Release workflow for Windows, macOS, and Linux binaries.

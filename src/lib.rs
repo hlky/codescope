@@ -6,4 +6,5 @@ pub mod markdown;
 pub mod model;
 pub mod output;
 pub mod python;
+pub mod rust;
 pub mod workspace;

@@ -1,6 +1,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use serde_json::{Value, json};
@@ -9,23 +10,60 @@ use url::Url;
 use crate::model::{Language, Symbol, SymbolKind, SymbolKindFilter, kind_matches, name_matches};
 use crate::workspace::{language_for_path, line_slice, read_text};
 
-pub struct ClangdOptions {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LspServer {
+    Clangd,
+    RustAnalyzer,
+}
+
+impl LspServer {
+    fn executable(self) -> &'static str {
+        match self {
+            Self::Clangd => "clangd",
+            Self::RustAnalyzer => "rust-analyzer",
+        }
+    }
+
+    fn backend(self) -> &'static str {
+        self.executable()
+    }
+}
+
+pub struct LspOptions {
     pub root: PathBuf,
     pub compile_commands_dir: Option<PathBuf>,
+    pub server: LspServer,
 }
 
 pub fn clangd_available() -> bool {
-    which::which("clangd").is_ok()
+    server_available(LspServer::Clangd)
+}
+
+pub fn rust_analyzer_available() -> bool {
+    server_available(LspServer::RustAnalyzer)
+}
+
+fn server_available(server: LspServer) -> bool {
+    let Ok(executable) = which::which(server.executable()) else {
+        return false;
+    };
+    Command::new(executable)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 pub fn document_symbols(
     files: &[(PathBuf, String)],
-    options: &ClangdOptions,
+    options: &LspOptions,
     kind_filter: Option<SymbolKindFilter>,
     wanted: Option<&str>,
     max_matches: usize,
 ) -> anyhow::Result<Vec<Symbol>> {
-    let mut client = ClangdClient::start(options)?;
+    let mut client = LspClient::start(options, false)?;
     let mut out: Vec<Symbol> = Vec::new();
     for (path, text) in files {
         let file_symbols = client.document_symbols_for_file(path, text, kind_filter, wanted)?;
@@ -41,11 +79,11 @@ pub fn document_symbols(
 
 pub fn references(
     files: &[(PathBuf, String)],
-    options: &ClangdOptions,
+    options: &LspOptions,
     wanted: &str,
     max_matches: usize,
 ) -> anyhow::Result<Vec<Symbol>> {
-    let mut client = ClangdClient::start(options)?;
+    let mut client = LspClient::start(options, true)?;
     let mut definition_position = None;
     for (path, text) in files {
         let positions = client.symbol_positions_for_file(path, text, wanted)?;
@@ -57,7 +95,7 @@ pub fn references(
 
     let mut out: Vec<Symbol> = Vec::new();
     if let Some((uri, line, character)) = definition_position {
-        let result = client.request(
+        let result = client.request_nonempty_array(
             "textDocument/references",
             json!({
                 "textDocument": { "uri": uri },
@@ -90,7 +128,7 @@ pub fn references(
                 out.push(Symbol::new(
                     path.clone(),
                     language_for_path(&path).unwrap_or(Language::Text),
-                    "clangd",
+                    client.server.backend(),
                     SymbolKind::Reference,
                     wanted,
                     wanted,
@@ -107,11 +145,11 @@ pub fn references(
 
 pub fn callers(
     files: &[(PathBuf, String)],
-    options: &ClangdOptions,
+    options: &LspOptions,
     wanted: &str,
     max_matches: usize,
 ) -> anyhow::Result<Vec<Symbol>> {
-    let mut client = ClangdClient::start(options)?;
+    let mut client = LspClient::start(options, true)?;
     let mut definition_position = None;
     for (path, text) in files {
         let positions = client.symbol_positions_for_file(path, text, wanted)?;
@@ -123,7 +161,7 @@ pub fn callers(
 
     let mut out: Vec<Symbol> = Vec::new();
     if let Some((uri, line, character)) = definition_position {
-        let prepared = client.request(
+        let prepared = client.request_nonempty_array(
             "textDocument/prepareCallHierarchy",
             json!({
                 "textDocument": { "uri": uri },
@@ -141,7 +179,7 @@ pub fn callers(
                     let Some(from) = call.get("from") else {
                         continue;
                     };
-                    let Some(symbol) = call_hierarchy_item_to_symbol(from) else {
+                    let Some(symbol) = call_hierarchy_item_to_symbol(from, client.server) else {
                         continue;
                     };
                     if !out.iter().any(|existing| {
@@ -163,57 +201,123 @@ pub fn callers(
     Ok(out)
 }
 
-struct ClangdClient {
+struct LspClient {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next_id: u64,
+    server: LspServer,
+    root_uri: String,
+    server_quiescent: bool,
+    server_error: Option<String>,
 }
 
-impl ClangdClient {
-    fn start(options: &ClangdOptions) -> anyhow::Result<Self> {
-        let clangd = which::which("clangd").context("clangd was not found on PATH")?;
-        let mut command = Command::new(clangd);
-        command.arg("--background-index").arg("--log=error");
-        if let Some(dir) = &options.compile_commands_dir {
-            command.arg(format!("--compile-commands-dir={}", dir.display()));
+impl LspClient {
+    fn start(options: &LspOptions, wait_for_workspace: bool) -> anyhow::Result<Self> {
+        let server_name = options.server.executable();
+        let executable = which::which(server_name)
+            .with_context(|| format!("{server_name} was not found on PATH"))?;
+        let mut command = Command::new(executable);
+        if options.server == LspServer::Clangd {
+            command.arg("--background-index").arg("--log=error");
+            if let Some(dir) = &options.compile_commands_dir {
+                command.arg(format!("--compile-commands-dir={}", dir.display()));
+            }
         }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .context("failed to start clangd")?;
+            .with_context(|| format!("failed to start {server_name}"))?;
         let stdin = child
             .stdin
             .take()
-            .context("failed to capture clangd stdin")?;
+            .with_context(|| format!("failed to capture {server_name} stdin"))?;
         let stdout = BufReader::new(
             child
                 .stdout
                 .take()
-                .context("failed to capture clangd stdout")?,
+                .with_context(|| format!("failed to capture {server_name} stdout"))?,
         );
+        let root_uri = uri_for_path(&options.root)?;
         let mut client = Self {
             child,
             stdin,
             stdout,
             next_id: 1,
+            server: options.server,
+            root_uri: root_uri.clone(),
+            server_quiescent: false,
+            server_error: None,
         };
         client.request(
             "initialize",
             json!({
                 "processId": null,
-                "rootUri": uri_for_path(&options.root)?,
+                "clientInfo": { "name": "codescope" },
+                "rootUri": root_uri,
+                "workspaceFolders": [{
+                    "uri": client.root_uri.clone(),
+                    "name": options.root.file_name().and_then(|name| name.to_str()).unwrap_or("workspace")
+                }],
                 "capabilities": {
+                    "workspace": {
+                        "configuration": true,
+                        "workspaceFolders": true
+                    },
                     "textDocument": {
-                        "documentSymbol": { "hierarchicalDocumentSymbolSupport": true }
+                        "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+                        "callHierarchy": {}
+                    },
+                    "experimental": {
+                        "serverStatusNotification": true
                     }
                 }
             }),
         )?;
         client.notify("initialized", json!({}))?;
+        if wait_for_workspace
+            && options.server == LspServer::RustAnalyzer
+            && options.root.join("Cargo.toml").is_file()
+        {
+            client.wait_for_rust_workspace()?;
+        }
         Ok(client)
+    }
+
+    fn wait_for_rust_workspace(&mut self) -> anyhow::Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut workspace_loaded_at = None;
+        loop {
+            let status = self.request(
+                "rust-analyzer/analyzerStatus",
+                json!({ "textDocument": null }),
+            )?;
+            if workspace_loaded_at.is_none()
+                && status.as_str().is_some_and(|status| {
+                    !status.is_empty() && !status.starts_with("No workspaces")
+                })
+            {
+                workspace_loaded_at = Some(Instant::now());
+            }
+            if let Some(error) = self.server_error.take() {
+                return Err(anyhow!(
+                    "rust-analyzer failed to load the workspace: {error}"
+                ));
+            }
+            if workspace_loaded_at.is_some_and(|loaded_at| {
+                self.server_quiescent || loaded_at.elapsed() >= Duration::from_secs(3)
+            }) {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(anyhow!(
+                    "rust-analyzer did not finish loading the Cargo workspace within 15 seconds"
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
 
     fn document_symbols_for_file(
@@ -298,18 +402,23 @@ impl ClangdClient {
                     && wanted.is_none_or(|wanted| {
                         name_matches(&wanted.replace('.', "::"), &short, &qualified, "::")
                     })
-                    && let Some(symbol) =
-                        symbol_from_lsp(path, text, raw, kind, short, qualified.clone())
+                    && let Some(symbol) = symbol_from_lsp(
+                        path,
+                        text,
+                        raw,
+                        self.server,
+                        kind,
+                        short,
+                        qualified.clone(),
+                    )
                 {
                     out.push(symbol);
                 }
             }
-            let container = raw
-                .get("kind")
-                .and_then(Value::as_u64)
-                .is_some_and(|kind| matches!(kind, 3 | 5 | 10 | 23));
-            if container {
-                prefix.push(name);
+            let container_kind = raw.get("kind").and_then(Value::as_u64);
+            let container = container_kind.is_some_and(is_container_kind);
+            if let Some(kind) = container_kind.filter(|kind| is_container_kind(*kind)) {
+                prefix.push(container_scope_name(self.server, kind, &name));
             }
             if let Some(children) = raw.get("children").and_then(Value::as_array) {
                 self.visit_document_symbols(path, text, children, prefix, kind_filter, wanted, out);
@@ -359,7 +468,9 @@ impl ClangdClient {
             let Some(range) = raw.pointer("/location/range") else {
                 continue;
             };
-            if let Some(symbol) = symbol_from_range(path, text, range, kind, short, qualified) {
+            if let Some(symbol) =
+                symbol_from_range(path, text, range, self.server, kind, short, qualified)
+            {
                 out.push(symbol);
             }
         }
@@ -407,12 +518,10 @@ impl ClangdClient {
                     out.push((uri.to_string(), line, character));
                 }
             }
-            let container = raw
-                .get("kind")
-                .and_then(Value::as_u64)
-                .is_some_and(|kind| matches!(kind, 3 | 5 | 10 | 23));
-            if container {
-                prefix.push(name);
+            let container_kind = raw.get("kind").and_then(Value::as_u64);
+            let container = container_kind.is_some_and(is_container_kind);
+            if let Some(kind) = container_kind.filter(|kind| is_container_kind(*kind)) {
+                prefix.push(container_scope_name(self.server, kind, &name));
             }
             if let Some(children) = raw.get("children").and_then(Value::as_array) {
                 self.visit_positions(uri, children, prefix, wanted, out);
@@ -450,13 +559,67 @@ impl ClangdClient {
         self.send(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
         loop {
             let message = self.read_message()?;
+            self.process_server_message(&message)?;
             if message.get("id").and_then(Value::as_u64) == Some(id) {
                 if let Some(error) = message.get("error") {
-                    return Err(anyhow!("clangd {method} failed: {error}"));
+                    return Err(anyhow!(
+                        "{} {method} failed: {error}",
+                        self.server.backend()
+                    ));
                 }
                 return Ok(message.get("result").cloned().unwrap_or(Value::Null));
             }
         }
+    }
+
+    fn request_nonempty_array(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let result = self.request(method, params.clone())?;
+            if self.server != LspServer::RustAnalyzer
+                || result.as_array().is_some_and(|items| !items.is_empty())
+                || Instant::now() >= deadline
+            {
+                return Ok(result);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn process_server_message(&mut self, message: &Value) -> anyhow::Result<()> {
+        if message.get("method").and_then(Value::as_str) == Some("experimental/serverStatus") {
+            self.server_quiescent = message
+                .pointer("/params/quiescent")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if message.pointer("/params/health").and_then(Value::as_str) == Some("error") {
+                self.server_error = Some(
+                    message
+                        .pointer("/params/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown rust-analyzer workspace error")
+                        .to_string(),
+                );
+            }
+        }
+        let (Some(id), Some(method)) = (message.get("id"), message.get("method")) else {
+            return Ok(());
+        };
+        let result = match method.as_str().unwrap_or_default() {
+            "workspace/configuration" => {
+                let count = message
+                    .pointer("/params/items")
+                    .and_then(Value::as_array)
+                    .map_or(0, Vec::len);
+                Value::Array(vec![Value::Null; count])
+            }
+            "workspace/workspaceFolders" => json!([{
+                "uri": self.root_uri,
+                "name": "workspace"
+            }]),
+            _ => Value::Null,
+        };
+        self.send(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
     }
 
     fn notify(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
@@ -476,7 +639,10 @@ impl ClangdClient {
         loop {
             let mut line = String::new();
             if self.stdout.read_line(&mut line)? == 0 {
-                return Err(anyhow!("clangd exited while waiting for a response"));
+                return Err(anyhow!(
+                    "{} exited while waiting for a response",
+                    self.server.backend()
+                ));
             }
             let trimmed = line.trim_end();
             if trimmed.is_empty() {
@@ -486,14 +652,16 @@ impl ClangdClient {
                 content_length = Some(value.trim().parse::<usize>()?);
             }
         }
-        let length = content_length.context("clangd response missing Content-Length")?;
+        let length = content_length.with_context(|| {
+            format!("{} response missing Content-Length", self.server.backend())
+        })?;
         let mut body = vec![0; length];
         self.stdout.read_exact(&mut body)?;
         Ok(serde_json::from_slice(&body)?)
     }
 
     fn shutdown(&mut self) {
-        let _ = self.request("shutdown", json!({}));
+        let _ = self.request("shutdown", Value::Null);
         let _ = self.notify("exit", json!({}));
         self.terminate();
     }
@@ -504,7 +672,7 @@ impl ClangdClient {
     }
 }
 
-impl Drop for ClangdClient {
+impl Drop for LspClient {
     fn drop(&mut self) {
         self.terminate();
     }
@@ -514,17 +682,19 @@ fn symbol_from_lsp(
     path: &Path,
     text: &str,
     raw: &Value,
+    server: LspServer,
     kind: SymbolKind,
     name: String,
     qualified: String,
 ) -> Option<Symbol> {
-    symbol_from_range(path, text, raw.get("range")?, kind, name, qualified)
+    symbol_from_range(path, text, raw.get("range")?, server, kind, name, qualified)
 }
 
 fn symbol_from_range(
     path: &Path,
     text: &str,
     range: &Value,
+    server: LspServer,
     kind: SymbolKind,
     name: String,
     qualified: String,
@@ -534,7 +704,7 @@ fn symbol_from_range(
     Some(Symbol::new(
         path.to_path_buf(),
         language_for_path(path).unwrap_or(Language::Text),
-        "clangd",
+        server.backend(),
         kind,
         name,
         qualified,
@@ -544,7 +714,7 @@ fn symbol_from_range(
     ))
 }
 
-fn call_hierarchy_item_to_symbol(item: &Value) -> Option<Symbol> {
+fn call_hierarchy_item_to_symbol(item: &Value, server: LspServer) -> Option<Symbol> {
     let uri = item.get("uri").and_then(Value::as_str)?;
     let path = path_from_uri(uri)?;
     let name = item
@@ -552,7 +722,8 @@ fn call_hierarchy_item_to_symbol(item: &Value) -> Option<Symbol> {
         .and_then(Value::as_str)
         .map(clean_symbol_name)?;
     let detail = item.get("detail").and_then(Value::as_str).unwrap_or("");
-    let qualified = if detail.is_empty() || name.contains("::") {
+    let qualified = if server == LspServer::RustAnalyzer || detail.is_empty() || name.contains("::")
+    {
         name.clone()
     } else {
         let prefix = detail
@@ -577,18 +748,72 @@ fn call_hierarchy_item_to_symbol(item: &Value) -> Option<Symbol> {
         &path,
         &text,
         range,
+        server,
         kind,
         symbol_short_name(&name),
         qualified,
     )
 }
 
+fn is_container_kind(kind: u64) -> bool {
+    matches!(kind, 2 | 3 | 5 | 10 | 11 | 19 | 23)
+}
+
+fn container_scope_name(server: LspServer, kind: u64, name: &str) -> String {
+    if server != LspServer::RustAnalyzer || kind != 19 {
+        return name.to_string();
+    }
+    let mut implementation = name.strip_prefix("impl ").unwrap_or(name).trim();
+    if implementation.starts_with('<')
+        && let Some(end) = matching_angle_bracket(implementation)
+    {
+        implementation = implementation[end + 1..].trim();
+    }
+    if let Some((_, implemented_type)) = implementation.rsplit_once(" for ") {
+        implementation = implemented_type.trim();
+    }
+    strip_angle_arguments(implementation)
+}
+
+fn matching_angle_bracket(value: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, character) in value.char_indices() {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn strip_angle_arguments(value: &str) -> String {
+    let mut result = String::new();
+    let mut depth = 0usize;
+    for character in value.chars() {
+        match character {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => result.push(character),
+            _ => {}
+        }
+    }
+    result.trim().to_string()
+}
+
 fn lsp_kind(kind: u64) -> Option<SymbolKind> {
     match kind {
+        2 => Some(SymbolKind::Module),
         5 => Some(SymbolKind::Class),
         6 | 9 | 12 => Some(SymbolKind::Function),
         8 | 13 | 14 | 22 => Some(SymbolKind::Variable),
         10 => Some(SymbolKind::Enum),
+        11 => Some(SymbolKind::Trait),
         23 => Some(SymbolKind::Struct),
         _ => None,
     }
@@ -616,6 +841,7 @@ fn language_id(path: &Path) -> &'static str {
     match language_for_path(path).unwrap_or(Language::Cpp) {
         Language::C => "c",
         Language::Cuda => "cuda-cpp",
+        Language::Rust => "rust",
         _ => "cpp",
     }
 }
@@ -633,6 +859,14 @@ fn path_from_uri(uri: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rust_impl_container_uses_implemented_type() {
+        assert_eq!(
+            container_scope_name(LspServer::RustAnalyzer, 19, "impl<T> Runner for Worker<T>"),
+            "Worker"
+        );
+    }
 
     #[test]
     fn dropping_client_terminates_and_reaps_child() {
@@ -654,11 +888,15 @@ mod tests {
                 .expect("test child stdout should be piped"),
         );
 
-        let client = ClangdClient {
+        let client = LspClient {
             child,
             stdin,
             stdout,
             next_id: 1,
+            server: LspServer::Clangd,
+            root_uri: "file:///workspace".to_string(),
+            server_quiescent: false,
+            server_error: None,
         };
         drop(client);
 

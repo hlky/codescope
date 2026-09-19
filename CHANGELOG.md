@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.21 - 2026-09-19
+
+- Added Rust symbol extraction, references, callers, and import context with rust-analyzer semantics and tree-sitter fallback.
+- Added Rust symbol kinds and Cargo project-root discovery, with CLI tests and updated documentation and skill guidance.
+- Fixed qualified C-family and Rust name matching to respect symbol boundaries.
+- Normalized Windows paths in text and JSON output by removing extended-path prefixes and using forward slashes, including UNC paths.
+
 ## v0.1.20 - 2026-07-14
 
 - Restored the focused v0.1.1 command surface after later features made agent usage less predictable.
