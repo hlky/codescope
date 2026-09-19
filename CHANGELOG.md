@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.22 - 2026-09-19
+
+- Simplified the agent skill around list and extract workflows, reducing its token count by about 60% while retaining examples, naming rules, and filters.
+
 ## v0.1.21 - 2026-09-19
 
 - Added Rust symbol extraction, references, callers, and import context with rust-analyzer semantics and tree-sitter fallback.

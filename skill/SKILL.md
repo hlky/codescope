@@ -5,55 +5,22 @@ description: Inspect Python, Rust, C, C++, CUDA, HIP, and Markdown symbols or se
 
 # Codescope
 
-Use `codescope` when a task needs focused context for known or fuzzy Python, Rust, C, C++, CUDA, HIP, or Markdown symbols and sections.
-
-## Quick Start
-
-```bash
-codescope extract-function --name FUNCTION_NAME --path .
-```
-
-Command selection:
+List to discover names, then extract only the needed source. Set `--path` to the narrowest known file or directory.
 
 ```bash
 codescope list-functions --path src --query parse
-codescope extract-function --name ClassName.method_name --path src
-codescope extract-symbol --name Widget --kind class --path src
-codescope extract-variable --name DEFAULT_LIMIT --path src
+codescope extract-function --path src --name parse_config
+codescope extract-symbol --path src --name Widget --kind class
+codescope extract-variable --path src --name DEFAULT_LIMIT
 codescope list-headings --path docs --query install
-codescope extract-section --name Usage.Installation --path README.md
-codescope references --name parse_config --path src
-codescope callers --name parse_config --path src
-codescope context --name parse_config --path src
+codescope extract-section --path README.md --name Usage.Installation
 ```
 
-## Behavior
-
-- Windows output paths use `/` separators without the extended-path prefix in both text and JSON; UNC paths use `//server/share/file.py`.
-- Python extraction uses tree-sitter and returns decorators plus the full `def` or `async def` body.
-- Python names may be unqualified (`foo`) or qualified (`ClassName.foo`, `Outer.Inner.foo`).
-- Python variables include module constants, class attributes, and local assignments.
-- Rust extraction covers functions, methods, structs, enums, unions, traits, modules, type aliases, macros, constants, statics, fields, and local bindings.
-- Rust symbol, reference, and caller discovery uses rust-analyzer in `--backend auto` when available, with tree-sitter fallback.
-- Use `--backend lsp` to require semantic Rust results; codescope discovers the nearest Cargo project root unless `--root` is provided.
-- Rust qualified names use `::`, such as `module::Type::method`.
-- C-family extraction covers C, C++, CUDA (`.cu`, `.cuh`), and HIP (`.hip`) sources.
-- C-family symbol, reference, and caller discovery uses clangd in `--backend auto` when available, with tree-sitter or lexical fallback.
-- Use `--backend lsp` to require semantic C-family results, and pass `--compile-commands-dir` when the project has a non-default compilation database.
-- Use `--root` when the clangd project root differs from the search `--path`.
-- Markdown heading discovery uses tree-sitter and ignores fenced-code headings.
-- Markdown headings have nested qualified names like `Usage.Installation`; `extract-section` returns the heading and content until the next heading at the same or higher level.
-- Use `--lang markdown` to limit search to Markdown and `--kind heading` for heading symbols.
-- Use `--json` when stable fields are needed: `path`, `language`, `backend`, `kind`, `name`, `qualified_name`, `start_line`, `end_line`, and `source`.
-
-## Agent Workflow
-
-1. Use `codescope list-functions` when the exact function name is unknown or fuzzy.
-2. Use `codescope extract-function` for a known function, method, constructor, destructor, CUDA kernel, or HIP kernel.
-3. Use `codescope extract-symbol` for classes, structs, enums, unions, traits, modules, type aliases, macros, and mixed symbol lookup.
-4. Use `codescope extract-variable` for constants, globals, fields, Python assignments, and Rust bindings; add `--scope` for scoped variables.
-5. Use `codescope list-headings` when the exact Markdown heading is unknown or fuzzy.
-6. Use `codescope extract-section` for focused Markdown documentation context.
-7. Use `codescope references` or `codescope callers` before opening broad call-site regions.
-8. Use `codescope context` when a symbol plus imports/includes is enough context for reasoning.
-9. If `--backend lsp` fails, retry with `--backend auto` unless semantic clangd or rust-analyzer behavior is required.
+- Omit `--query` to list all functions or headings.
+- `extract-function`: functions, methods, constructors, destructors, and GPU kernels.
+- `extract-symbol`: types, classes, structs, enums, traits, modules, aliases, macros, or mixed symbol lookup; omit `--kind` when unsure.
+- `extract-variable`: constants, globals, fields, and local bindings; use `--scope` to disambiguate.
+- Use qualified names from list output: Python `Class.method`, Rust `module::Type::method`, Markdown `Parent.Child`.
+- `extract-section` includes the heading through the next heading of equal or higher level; fenced-code headings are ignored.
+- Narrow results with `--lang` or `--max-matches`; use `--json` for structured output.
+- Default `--backend auto` uses available language servers with parser fallback. Use `codescope <command> --help` for backend options and other flags.
